@@ -232,7 +232,7 @@ class AnsibleExecutor:
                 cwd=str(self.base_dir),
                 capture_output=True,
                 text=True,
-                timeout=self.timeout * 5,
+                timeout=self.timeout,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
