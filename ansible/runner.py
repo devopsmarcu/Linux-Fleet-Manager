@@ -77,6 +77,15 @@ class AnsibleExecutor:
             raise AnsibleError("Módulo Ansible não especificado")
 
         operation_id = uuid.uuid4().hex[:12]
+
+        # Pass extra_vars via temporary file to prevent shell injection and handle complex types
+        extra_vars_file = None
+        if extra_vars:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
+                json.dump(extra_vars, tf)
+                extra_vars_file = tf.name
+
         cmd: list[str] = [
             self._binary("ansible"),
             str(targets),
@@ -95,16 +104,26 @@ class AnsibleExecutor:
             cmd.append("-b")
         elif become is False:
             cmd.extend(["-e", "ansible_become=false"])
-        for key, value in (extra_vars or {}).items():
-            cmd.extend(["-e", f"{key}={value}"])
 
-        return self._run(
-            cmd,
-            operation_id,
-            lfm_kind="adhoc",
-            lfm_module=module,
-            lfm_targets=targets,
-        )
+        if extra_vars_file:
+            cmd.extend(["-e", f"@{extra_vars_file}"])
+
+        try:
+            result = self._run(
+                cmd,
+                operation_id,
+                lfm_kind="adhoc",
+                lfm_module=module,
+                lfm_targets=targets,
+            )
+        finally:
+            if extra_vars_file:
+                try:
+                    Path(extra_vars_file).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        return result
 
     def playbook(
         self,
@@ -125,6 +144,15 @@ class AnsibleExecutor:
             )
 
         operation_id = uuid.uuid4().hex[:12]
+
+        # Pass extra_vars via temporary file to prevent shell injection and handle complex types
+        extra_vars_file = None
+        if extra_vars:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
+                json.dump(extra_vars, tf)
+                extra_vars_file = tf.name
+
         cmd: list[str] = [
             self._binary("ansible-playbook"),
             str(playbook_path),
@@ -141,16 +169,26 @@ class AnsibleExecutor:
             cmd.append("-b")
         elif become is False:
             cmd.extend(["-e", "ansible_become=false"])
-        for key, value in (extra_vars or {}).items():
-            cmd.extend(["-e", f"{key}={value}"])
 
-        return self._run(
-            cmd,
-            operation_id,
-            lfm_kind="playbook",
-            lfm_playbook=str(playbook_path),
-            lfm_targets=targets or "all",
-        )
+        if extra_vars_file:
+            cmd.extend(["-e", f"@{extra_vars_file}"])
+
+        try:
+            result = self._run(
+                cmd,
+                operation_id,
+                lfm_kind="playbook",
+                lfm_playbook=str(playbook_path),
+                lfm_targets=targets or "all",
+            )
+        finally:
+            if extra_vars_file:
+                try:
+                    Path(extra_vars_file).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        return result
 
     def ping(
         self,
@@ -239,7 +277,7 @@ class AnsibleExecutor:
             raise AnsibleTimeoutError(
                 "Operação Ansible excedeu tempo limite",
                 op_id=operation_id,
-                timeout_seconds=self.timeout * 5,
+                timeout_seconds=self.timeout,
             ) from exc
         except FileNotFoundError as exc:
             raise AnsibleError(

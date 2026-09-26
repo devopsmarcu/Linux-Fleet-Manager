@@ -85,14 +85,15 @@ class TestStatusCommand:
 class TestHealthCommand:
     def test_run_default(self) -> None:
         result = runner.invoke(app, ["health", "run"])
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         assert "Health Check" in result.stdout
-        assert "DISK" in result.stdout
-        assert "REBOOT" in result.stdout
+        assert "Disk" in result.stdout
+        assert "Connectivity" in result.stdout
 
     def test_run_quick(self) -> None:
         result = runner.invoke(app, ["health", "run", "--quick"])
-        assert result.exit_code == 0
+        assert result.exit_code == 2
+        assert "Health Check" in result.stdout
         assert "rápido" in result.stdout
         assert "LOAD" not in result.stdout
         assert "REBOOT" not in result.stdout

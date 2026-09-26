@@ -1,38 +1,38 @@
 # 🐧 Linux Fleet Manager (LFM)
 
-**Automação e gerenciamento de nível empresarial para infraestrutura Linux profissional.**
+**Orquestração e gerenciamento de infraestrutura Linux baseada em Ansible.**
 
-Linux Fleet Manager é uma ferramenta CLI de alta performance projetada para administradores de sistemas e engenheiros DevOps que precisam gerenciar uma frota de servidores Linux com precisão, velocidade e auditabilidade completa. Ao unir uma interface CLI profissional com o poder do Ansible, o LFM oferece um plano de controle unificado para monitoramento de saúde, gerenciamento de pacotes e execução remota.
+Linux Fleet Manager é uma ferramenta CLI projetada para administradores de sistemas e engenheiros DevOps que precisam de uma interface simplificada e auditável para gerenciar frotas de servidores Linux. Ao atuar como um wrapper inteligente sobre o Ansible, o LFM oferece um plano de controle unificado para monitoramento de saúde, gerenciamento de pacotes e execução remota, eliminando a necessidade de escrever playbooks YAML para tarefas rotineiras.
 
 ## 🚩 O Problema
 
-Gerenciar um punhado de servidores Linux manualmente é viável. No entanto, à medida que a frota cresce, a abordagem "um por um" se torna um problema:
-- **Inconsistência**: Ocorre drift de configuração quando atualizações são aplicadas manualmente em alguns nós, mas esquecidas em outros.
-- **Ineficiência**: Realizar uma simples verificação de saúde ou atualização de pacotes em mais de 50 máquinas consome tempo demais.
-- **Falta de Visibilidade**: Não há registro centralizado de quem executou qual comando, em qual host e qual foi o resultado.
-- **Risco**: A execução manual de comandos destrutivos no terminal errado é uma ameaça constante.
+Gerenciar múltiplos servidores Linux manualmente é inviável em escala:
+- **Inconsistência**: Drift de configuração quando atualizações são aplicadas manualmente.
+- **Ineficiência**: Executar verificações de saúde ou atualizações de pacotes em múltiplos nós consome tempo excessivo.
+- **Falta de Visibilidade**: Ausência de registro centralizado de quem executou qual comando e qual foi o resultado.
+- **Risco**: A execução manual de comandos destrutivos sem confirmação é uma ameaça constante.
 
 ## 💡 A Solução
 
-O LFM implementa uma arquitetura de orquestração em camadas que abstrai a complexidade do Ansible mantendo sua robustez.
+O LFM implementa uma arquitetura de orquestração que abstrai a complexidade do Ansible, mantendo sua robustez e segurança.
 
 **Fluxo de Execução:**
-`LFM CLI` $\rightarrow$ `Núcleo Python (Lógica e Validação)` $\rightarrow$ `Motor Ansible` $\rightarrow$ `Protocolo SSH` $\rightarrow$ `Frota Linux`
+`LFM CLI` $\rightarrow$ `Core (Lógica e Validação)` $\rightarrow$ `Ansible Executor` $\rightarrow$ `Protocolo SSH` $\rightarrow$ `Frota Linux`
 
-Essa arquitetura garante que toda ação seja validada, registrada e executada de forma determinística em toda a infraestrutura.
+Essa arquitetura garante que toda ação seja validada, registrada em trilha de auditoria e executada de forma determinística.
 
 ## ✨ Funcionalidades
 
-- **📦 Gerenciamento de Pacotes**: Instalação e remoção centralizada de pacotes em toda a frota.
-- **🚀 Atualização do Sistema**: Atualizações orquestradas em todo o sistema para manter todos os nós seguros e atualizados.
-- **🩺 Verificações de Saúde**: Validação automatizada dos indicadores do sistema (CPU, RAM, Disco, Serviços).
-- **🖥️ Execução Remota**: Execução de shell controlada com proteções de segurança e mascaramento de segredos integrados.
-- **🛠️ Manutenção**: Ciclos de manutenção automatizados (limpeza de cache, purga de tmp, remoção de pacotes órfãos).
-- **📋 Gerenciamento de Inventário**: Organização hierárquica de hosts e grupos.
-- **⏱️ Monitoramento de Status**: Verificações de conectividade e latência em tempo real.
-- **📜 Trilha de Auditoria**: Toda operação é registrada em um log de auditoria JSONL estruturado para conformidade.
-- **📊 Relatórios de Frota**: Relatórios consolidados em HTML/CSV/JSON do estado da frota e histórico de operações.
-- **🪵 Logging Estruturado**: Logs JSON rotativos para observabilidade profissional.
+- **📦 Gerenciamento de Pacotes**: Instalação e remoção centralizada de pacotes (`lfm package install/remove`).
+- **🚀 Atualização do Sistema**: Atualizações orquestradas de pacotes do sistema (`lfm update`).
+- **🩺 Verificações de Saúde**: Validação automatizada de indicadores básicos (CPU, RAM, Disco, Serviços) via playbook especializado.
+- **🖥️ Execução Remota**: Execução de shell controlada com confirmação obrigatória para mitigar erros humanos.
+- **🛠️ Manutenção**: Ciclos de manutenção automatizados para limpeza de cache e arquivos temporários.
+- **📋 Gerenciamento de Inventário**: Organização de hosts e grupos via arquivos INI.
+- **⏱️ Monitoramento de Status**: Verificações rápidas de conectividade e latência via `ping`.
+- **📜 Trilha de Auditoria**: Registro imutável de todas as operações em formato JSONL para conformidade.
+- **📊 Relatórios de Frota**: Geração de relatórios consolidados do estado da frota em HTML, CSV ou JSON.
+- **🪵 Logging Estruturado**: Logs JSON rotativos para observabilidade do sistema.
 
 ## 🏗️ Arquitetura
 
@@ -68,8 +68,8 @@ graph TD
 - **Linguagem**: Python 3.12+
 - **Orquestração**: Ansible
 - **Transporte**: SSH (OpenSSH)
-- **UI**: Typer & Rich (para saída de terminal profissional)
-- **Validação**: Pydantic (para modelagem de dados rigorosa)
+- **UI**: Typer & Rich (Saída de terminal profissional)
+- **Validação**: Pydantic (Modelagem de dados)
 - **Ambiente**: Otimizado para Linux & WSL2
 
 ## 💻 Exemplos de CLI
@@ -79,8 +79,8 @@ graph TD
 # Verificar conectividade de todos os hosts
 lfm status check
 
-# Executar diagnóstico completo de saúde na frota
-lfm health check
+# Executar diagnóstico de saúde na frota
+lfm health run
 ```
 
 ### Gerenciamento Remoto
@@ -89,7 +89,7 @@ lfm health check
 lfm update --group workstations
 
 # Instalar um pacote em um host específico
-lfm install nginx --host web-server-01
+lfm package install nginx --host web-server-01
 
 # Executar um comando remoto controlado
 lfm exec run "df -h"
@@ -100,12 +100,11 @@ lfm exec run "df -h"
 # Ver histórico de operações recentes
 lfm history list
 
-# Gerar um relatório HTML consolidado da frota
+# Gerar um relatório consolidado da frota
 lfm report generate --format html
 ```
 
 ## 📂 Estrutura do Projeto
-
 ```text
 linux-fleet-manager/
 ├── ansible/            # Playbooks Ansible e lógica do executor
@@ -151,7 +150,7 @@ linux-fleet-manager/
 ## 🔒 Configuração
 
 ### Inventário
-Edite `inventory/hosts.ini` para definir sua frota:
+Edite `ansible/inventory/hosts.ini` para definir sua frota:
 ```ini
 [webservers]
 web-01 ansible_host=192.168.1.10 ansible_user=admin
@@ -166,11 +165,11 @@ A configuração pode ser gerenciada via `config.yaml` ou variáveis de ambiente
 
 ## 🛡️ Segurança
 
-O LFM foi projetado com uma mentalidade de segurança em primeiro lugar:
-- **Mascaramento de Segredos**: Comandos contendo padrões como `--password` ou `TOKEN=` são automaticamente redigidos dos logs de auditoria e logs estruturados.
-- **Proteção contra Ações Destrutivas**: Comandos identificados como perigosos (ex.: `rm -rf /`) acionam um prompt de confirmação manual obrigatório.
-- **Escalonamento de Privilégios**: O `become` (sudo) é tratado explicitamente via Ansible, garantindo que o escalonamento de privilégios seja controlado e registrado.
-- **Sem SSH Direto a partir do Python**: Toda a conectividade é delegada ao motor Ansible, aproveitando a segurança padrão da indústria em SSH.
+O LFM adota práticas de redução de risco para operações em larga escala:
+- **Mascaramento de Segredos**: Comandos contendo padrões de senhas ou tokens são redigidos dos logs de auditoria para evitar vazamento de credenciais.
+- **Confirmação Obrigatória**: Toda execução de comando arbitrário via `lfm exec` exige confirmação manual, prevenindo a execução acidental de comandos destrutivos.
+- **Escalonamento de Privilégios**: O uso de `become` (sudo) é controlado via Ansible, garantindo que a elevação de privilégios seja explícita e registrada.
+- **Isolamento de Execução**: A conectividade é delegada ao motor Ansible, aproveitando a segurança e estabilidade do protocolo SSH padrão da indústria.
 
 ## 🛠️ Desenvolvimento
 
@@ -187,13 +186,6 @@ pytest tests/
 
 ## 🗺️ Roadmap
 
-- **V1 (Atual)**: Orquestração principal, gerenciamento de pacotes, execução remota, trilha de auditoria e relatórios em HTML.
-- **V2**: Otimização de execução paralela, integração com fontes de inventário externas (NetBox/AWS) e métricas de saúde avançadas.
-- **V3**: Dashboard baseado na web para monitoramento da frota em tempo real e janelas de manutenção agendadas.
-
-## 📸 Capturas de Tela
-
-*(Capturas de tela em breve)*
-- `[Captura de tela: saída de lfm history list]`
-- `[Captura de tela: saída HTML de lfm report]`
-- `[Captura de tela: prompt de confirmação de lfm exec]`
+- **V1 (Atual)**: Orquestração de pacotes, execução remota, trilha de auditoria e relatórios consolidados.
+- **V2**: Integração com inventários dinâmicos (AWS/NetBox) e suporte a execução assíncrona para frotas massivas.
+- **V3**: Dashboard web para monitoramento em tempo real e agendamento de janelas de manutenção.

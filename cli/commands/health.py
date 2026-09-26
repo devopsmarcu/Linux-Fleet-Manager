@@ -94,18 +94,14 @@ def run_cmd(
         "-t",
         help="Timeout em segundos.",
     ),
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="Execução rápida (pula verificações lentas).",
+    ),
 ) -> None:
     """Executa o checklist de saúde nos hosts."""
-    if isinstance(host, typer.models.OptionInfo):
-        host = None
-    if isinstance(group, typer.models.OptionInfo):
-        group = None
-    if isinstance(as_json, typer.models.OptionInfo):
-        as_json = False
-    if isinstance(timeout, typer.models.OptionInfo):
-        timeout = 10
-
-    run_health_check(host_name=host, group=group, as_json=as_json, timeout=timeout)
+    run_health_check(host_name=host, group=group, as_json=as_json, timeout=timeout, quick=quick)
 
 
 def run_health_check(
@@ -113,12 +109,14 @@ def run_health_check(
     group: str | None = None,
     as_json: bool = False,
     timeout: int = 10,
+    quick: bool = False,
 ) -> None:
     checker = HealthChecker()
     reports: list[HostHealthReport] = checker.run_health_check(
         group=group,
         host_name=host_name,
         timeout=timeout,
+        quick=quick,
     )
 
     if as_json:
@@ -130,6 +128,8 @@ def run_health_check(
     console = Console()
     console.print()
     console.print("[bold cyan]Linux Fleet Manager[/bold cyan] · [dim]Health Check[/dim]")
+    if quick:
+        console.print("[dim](modo rápido)[/dim]")
     console.print("─" * 50)
 
     if not reports:
@@ -140,6 +140,7 @@ def run_health_check(
     table.add_column("HOST", style="cyan", no_wrap=True)
     table.add_column("STATUS", style="bold", justify="center")
     table.add_column("ISSUES", style="white")
+    table.add_column("CHECKS", style="dim")
 
     healthy_count = 0
     warning_count = 0
@@ -148,7 +149,11 @@ def run_health_check(
     for rep in reports:
         style = _STATUS_STYLE.get(rep.status, "bold")
         status_cell = f"[{style}]{rep.status.value}[/{style}]"
-        table.add_row(rep.host, status_cell, rep.issues_display)
+
+        # Aggregate check names to show what was verified
+        checks_str = ", ".join([c.name for c in rep.checks])
+
+        table.add_row(rep.host, status_cell, rep.issues_display, checks_str)
 
         if rep.status == HealthState.HEALTHY:
             healthy_count += 1

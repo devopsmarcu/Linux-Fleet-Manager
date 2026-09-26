@@ -10,7 +10,7 @@ from cli.commands.exec import app as exec_app
 from cli.commands.history import app as history_app
 from cli.commands.inventory import app as inventory_app
 from cli.commands.maintenance import app as maintenance_app
-from cli.commands.packages import install_app, remove_app
+from cli.commands.packages import app as package_app
 from cli.commands.report import app as report_app
 from cli.commands.status import app as status_app
 from cli.commands.update import app as update_app
@@ -36,8 +36,7 @@ app.add_typer(health_app, name="health", help="Executar health checks nos hosts.
 app.add_typer(exec_app, name="exec", help="Executar comandos shell arbitrários nos hosts.")
 app.add_typer(history_app, name="history", help="Visualizar histórico de operações.")
 app.add_typer(report_app, name="report", help="Gerar relatórios consolidados da frota.")
-app.add_typer(install_app, name="install", help="Instalar pacote nos hosts Linux.")
-app.add_typer(remove_app, name="remove", help="Remover pacote dos hosts Linux.")
+app.add_typer(package_app, name="package", help="Gerenciar pacotes nos hosts Linux.")
 app.add_typer(update_app, name="update", help="Atualizar pacotes do sistema nos hosts Linux.")
 app.add_typer(maintenance_app, name="maintenance", help="Executar ciclo de manutenção nos hosts Linux.")
 

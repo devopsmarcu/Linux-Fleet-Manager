@@ -36,6 +36,7 @@ class HealthChecker:
         group: str | None = None,
         host_name: str | None = None,
         timeout: int | None = None,
+        quick: bool = False,
     ) -> list[HostHealthReport]:
         """Executa o playbook de health check e avalia cada host."""
         target_pattern = host_name or group or targets or "all"
@@ -52,11 +53,13 @@ class HealthChecker:
         )
 
         try:
+            # Pass the 'quick' flag as an extra variable to Ansible
             op_result = self.executor.playbook(
                 playbook="health_check.yml",
                 targets=target_pattern,
                 timeout=timeout,
                 become=False,
+                extra_vars={"lfm_quick_check": quick},
             )
         except Exception as exc:
             logger.error(
