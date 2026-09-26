@@ -1,0 +1,97 @@
+---
+# Linux Fleet Manager — System Update Playbook
+# Uso: ansible-playbook update.yml [-e "lfm_targets=group_or_host"]
+#
+# Operações idempotentes: apt/dnf upgrade apenas instala o que precisa.
+# Não remove pacotes; não faz dist-upgrade ou autoremove sem flags explícitas.
+
+- name: LFM — System Update
+  hosts: "{{ lfm_targets | default('all') }}"
+  gather_facts: true
+  any_errors_fatal: false
+
+  tasks:
+    # -----------------------------------------------------------------------
+    # Debian / Ubuntu  (apt)
+    # -----------------------------------------------------------------------
+    - name: Atualizar cache do apt (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      become: true
+      register: apt_cache_result
+      ignore_errors: true
+      when: ansible_os_family == 'Debian'
+      tags: [update, apt]
+
+    - name: Instalar atualizações disponíveis (Debian/Ubuntu)
+      ansible.builtin.apt:
+        upgrade: safe
+        autoclean: false
+        autoremove: false
+      become: true
+      register: apt_upgrade_result
+      ignore_errors: true
+      when: ansible_os_family == 'Debian'
+      tags: [update, apt]
+
+    # -----------------------------------------------------------------------
+    # RedHat / Fedora / CentOS  (dnf)
+    # -----------------------------------------------------------------------
+    - name: Instalar atualizações disponíveis (RedHat/dnf)
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_only: true
+      become: true
+      register: dnf_upgrade_result
+      ignore_errors: true
+      when: ansible_os_family == 'RedHat'
+      tags: [update, dnf]
+
+    # -----------------------------------------------------------------------
+    # Arch Linux  (pacman)
+    # -----------------------------------------------------------------------
+    - name: Atualizar sistema (Arch Linux)
+      community.general.pacman:
+        update_cache: true
+        upgrade: true
+      become: true
+      register: pacman_upgrade_result
+      ignore_errors: true
+      when: ansible_os_family == 'Archlinux'
+      tags: [update, pacman]
+
+    # -----------------------------------------------------------------------
+    # Consolidar resultado estruturado
+    # -----------------------------------------------------------------------
+    - name: Exportar resultado estruturado do update
+      ansible.builtin.set_fact:
+        lfm_update_result:
+          hostname: "{{ ansible_hostname | default(inventory_hostname) }}"
+          distribution: "{{ ansible_distribution | default('Linux') }}"
+          distribution_version: "{{ ansible_distribution_version | default('') }}"
+          pkg_manager: "{{ ansible_pkg_mgr | default('unknown') }}"
+          os_family: "{{ ansible_os_family | default('') }}"
+          changed: >-
+            {{
+              (apt_upgrade_result.changed | default(false)) or
+              (dnf_upgrade_result.changed | default(false)) or
+              (pacman_upgrade_result.changed | default(false))
+            }}
+          packages_updated: >-
+            {{
+              apt_upgrade_result.stdout_lines | default([]) |
+              length if ansible_os_family | default('') == 'Debian'
+              else
+              dnf_upgrade_result.results | default([]) |
+              length if ansible_os_family | default('') == 'RedHat'
+              else 0
+            }}
+          error: >-
+            {{
+              apt_upgrade_result.msg | default('') if (apt_upgrade_result.failed | default(false))
+              else dnf_upgrade_result.msg | default('') if (dnf_upgrade_result.failed | default(false))
+              else ''
+            }}
+      tags: [result]

@@ -1,0 +1,199 @@
+---
+# Linux Fleet Manager — Maintenance Playbook
+# Executado por `lfm maintenance`. Não faz operações destrutivas.
+# Coleta informações para o relatório de manutenção.
+#
+# Etapas:
+#  1. Health check (SSH, disco, memória, CPU, serviços)
+#  2. Verificação de espaço em disco
+#  3. Cálculo de tamanho de caches (sem apagar)
+#  4. Cálculo de tamanho de temporários (sem apagar)
+#  5. Verificação de serviços systemd
+#  6. Contagem de atualizações pendentes
+#  7. Coleta de informações do sistema
+#
+# A limpeza real (apt autoremove, apt clean, rm /tmp/*) é SEPARADA e
+# executada APENAS se --clean for passado explicitamente na CLI.
+
+- name: LFM — System Maintenance Report
+  hosts: "{{ lfm_targets | default('all') }}"
+  gather_facts: true
+  any_errors_fatal: false
+
+  tasks:
+    # -----------------------------------------------------------------------
+    # 1. Verificação de espaço em disco
+    # -----------------------------------------------------------------------
+    - name: Calcular uso de disco por filesystem
+      ansible.builtin.set_fact:
+        _disk_info: "{{ ansible_mounts | default([]) }}"
+      tags: [disk]
+
+    # -----------------------------------------------------------------------
+    # 2. Tamanho do cache de pacotes (read-only)
+    # -----------------------------------------------------------------------
+    - name: Calcular tamanho do cache apt
+      ansible.builtin.shell: "du -sb /var/cache/apt/archives/ 2>/dev/null | awk '{print $1}' || echo 0"
+      register: apt_cache_size
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'Debian'
+      tags: [cache]
+
+    - name: Calcular tamanho do cache dnf
+      ansible.builtin.shell: "du -sb /var/cache/dnf/ 2>/dev/null | awk '{print $1}' || echo 0"
+      register: dnf_cache_size
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'RedHat'
+      tags: [cache]
+
+    - name: Calcular tamanho do cache pacman
+      ansible.builtin.shell: "du -sb /var/cache/pacman/pkg/ 2>/dev/null | awk '{print $1}' || echo 0"
+      register: pacman_cache_size
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'Archlinux'
+      tags: [cache]
+
+    # -----------------------------------------------------------------------
+    # 3. Tamanho de temporários (read-only, sem deletar)
+    # -----------------------------------------------------------------------
+    - name: Calcular tamanho do /tmp
+      ansible.builtin.shell: "du -sb /tmp/ 2>/dev/null | awk '{print $1}' || echo 0"
+      register: tmp_size
+      ignore_errors: true
+      changed_when: false
+      tags: [tmp]
+
+    # -----------------------------------------------------------------------
+    # 4. Verificação de serviços com falha
+    # -----------------------------------------------------------------------
+    - name: Listar serviços com falha no systemd
+      ansible.builtin.shell: >
+        systemctl list-units --state=failed --no-legend --plain 2>/dev/null
+        | awk '{print $1}'
+      register: failed_services
+      ignore_errors: true
+      changed_when: false
+      tags: [services]
+
+    - name: Contar serviços ativos
+      ansible.builtin.shell: >
+        systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null
+        | wc -l
+      register: active_services_count
+      ignore_errors: true
+      changed_when: false
+      tags: [services]
+
+    # -----------------------------------------------------------------------
+    # 5. Atualizações pendentes
+    # -----------------------------------------------------------------------
+    - name: Contar atualizações pendentes (Debian/Ubuntu)
+      ansible.builtin.shell: >
+        apt-get -s upgrade 2>/dev/null
+        | grep -E '^[0-9]+ upgraded'
+        | awk '{print $1}'
+      register: apt_pending_updates
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'Debian'
+      tags: [updates]
+
+    - name: Contar atualizações pendentes (RedHat)
+      ansible.builtin.shell: "dnf check-update --quiet 2>/dev/null | grep -v '^$' | wc -l"
+      register: dnf_pending_updates
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'RedHat'
+      tags: [updates]
+
+    # -----------------------------------------------------------------------
+    # 6. Pacotes órfãos (apenas contagem, sem remover)
+    # -----------------------------------------------------------------------
+    - name: Contar pacotes órfãos/autoremovíveis (Debian/Ubuntu)
+      ansible.builtin.shell: >
+        apt-get -s autoremove 2>/dev/null
+        | grep -E '^[0-9]+ packages'
+        | awk '{print $1}'
+      register: apt_orphans
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'Debian'
+      tags: [cleanup]
+
+    # -----------------------------------------------------------------------
+    # 7. Consolidar todos os dados no fato estruturado
+    # -----------------------------------------------------------------------
+    - name: Exportar relatório de manutenção estruturado
+      ansible.builtin.set_fact:
+        lfm_maintenance_data:
+          hostname: "{{ ansible_hostname | default(inventory_hostname) }}"
+          default_ip: "{{ ansible_default_ipv4.address | default(ansible_host | default(inventory_hostname)) }}"
+          distribution: "{{ ansible_distribution | default('Linux') }}"
+          distribution_version: "{{ ansible_distribution_version | default('') }}"
+          pkg_manager: "{{ ansible_pkg_mgr | default('unknown') }}"
+          os_family: "{{ ansible_os_family | default('') }}"
+          # Disco
+          mounts: "{{ ansible_mounts | default([]) }}"
+          # Memória
+          mem_total_mb: "{{ ansible_memtotal_mb | default(0) }}"
+          mem_available_mb: "{{ ansible_memory_mb.nocache.free | default(ansible_memfree_mb | default(0)) }}"
+          # CPU
+          load_1m: "{{ ansible_loadavg['1m'] | default(0.0) }}"
+          cpu_cores: "{{ ansible_processor_vcpus | default(ansible_processor_count | default(1)) }}"
+          # Serviços
+          failed_services: "{{ (failed_services.stdout | default('') ).splitlines() | select('truthy') | list }}"
+          active_services: "{{ active_services_count.stdout | default('0') | int }}"
+          # Cache (bytes)
+          cache_bytes: >-
+            {{
+              apt_cache_size.stdout | default('0') | int if ansible_os_family | default('') == 'Debian'
+              else dnf_cache_size.stdout | default('0') | int if ansible_os_family | default('') == 'RedHat'
+              else pacman_cache_size.stdout | default('0') | int if ansible_os_family | default('') == 'Archlinux'
+              else 0
+            }}
+          # Temporários (bytes)
+          tmp_bytes: "{{ tmp_size.stdout | default('0') | int }}"
+          # Atualizações
+          pending_updates: >-
+            {{
+              apt_pending_updates.stdout | default('0') | int if ansible_os_family | default('') == 'Debian'
+              else dnf_pending_updates.stdout | default('0') | int if ansible_os_family | default('') == 'RedHat'
+              else 0
+            }}
+          # Órfãos
+          orphan_packages: "{{ apt_orphans.stdout | default('0') | int }}"
+          # Uptime
+          uptime_seconds: "{{ ansible_uptime_seconds | default(0) }}"
+          # DNS / Network
+          dns_ok: true
+          network_ok: "{{ ansible_default_ipv4.address is defined and ansible_default_ipv4.address | length > 0 }}"
+      tags: [result]
+
+    # -----------------------------------------------------------------------
+    # 8. Limpeza de cache (APENAS se lfm_do_clean=true for passado)
+    # -----------------------------------------------------------------------
+    - name: Limpar cache apt (somente se --clean solicitado)
+      ansible.builtin.apt:
+        autoclean: true
+        autoremove: false
+      become: true
+      register: apt_clean_result
+      ignore_errors: true
+      when:
+        - ansible_os_family == 'Debian'
+        - lfm_do_clean | default(false) | bool
+      tags: [cleanup, never]
+
+    - name: Limpar cache dnf (somente se --clean solicitado)
+      ansible.builtin.command: dnf clean packages
+      become: true
+      register: dnf_clean_result
+      ignore_errors: true
+      changed_when: dnf_clean_result.rc == 0
+      when:
+        - ansible_os_family == 'RedHat'
+        - lfm_do_clean | default(false) | bool
+      tags: [cleanup, never]

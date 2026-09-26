@@ -153,3 +153,76 @@ class TestSystemInfoParser:
         assert info.disk_display == "N/A"
         assert info.uptime_display == "N/A"
 
+
+class TestHealthCheckerEvaluation:
+    def test_evaluate_healthy_host(self) -> None:
+        from core.health import HealthChecker
+        from core.models import HealthState, Host
+
+        host_obj = Host(name="ubuntu-01", address="192.168.1.10")
+        health_data = {
+            "default_ip": "192.168.1.10",
+            "mounts": [{"mount": "/", "size_total": 100000000000, "size_available": 50000000000}],
+            "mem_total_mb": 8192,
+            "mem_available_mb": 4096,
+            "load_1m": 0.5,
+            "cpu_cores": 4,
+            "failed_services": [],
+            "dns_ok": True,
+            "network_ok": True,
+            "pending_updates": 5,
+        }
+
+        report = HealthChecker.evaluate_host_facts("ubuntu-01", host_obj, health_data)
+        assert report.host == "ubuntu-01"
+        assert report.status == HealthState.HEALTHY
+        assert report.issues == []
+        assert report.issues_display == "-"
+        assert len(report.checks) == 9
+
+    def test_evaluate_warning_host(self) -> None:
+        from core.health import HealthChecker
+        from core.models import HealthState, Host
+
+        host_obj = Host(name="ubuntu-02", address="192.168.1.11")
+        health_data = {
+            "default_ip": "192.168.1.11",
+            "mounts": [{"mount": "/", "size_total": 100000000000, "size_available": 18000000000}],
+            "mem_total_mb": 8192,
+            "mem_available_mb": 4096,
+            "load_1m": 0.5,
+            "cpu_cores": 4,
+            "failed_services": [],
+            "dns_ok": True,
+            "network_ok": True,
+            "pending_updates": 60,
+        }
+
+        report = HealthChecker.evaluate_host_facts("ubuntu-02", host_obj, health_data)
+        assert report.status == HealthState.WARNING
+        assert "Disk 82%" in report.issues
+        assert "60 updates" in report.issues
+
+    def test_evaluate_critical_host(self) -> None:
+        from core.health import HealthChecker
+        from core.models import HealthState, Host
+
+        host_obj = Host(name="debian-01", address="192.168.1.20")
+        health_data = {
+            "default_ip": "192.168.1.20",
+            "mounts": [{"mount": "/", "size_total": 100000000000, "size_available": 3000000000}],
+            "mem_total_mb": 8192,
+            "mem_available_mb": 4096,
+            "load_1m": 0.5,
+            "cpu_cores": 4,
+            "failed_services": [],
+            "dns_ok": True,
+            "network_ok": True,
+            "pending_updates": 0,
+        }
+
+        report = HealthChecker.evaluate_host_facts("debian-01", host_obj, health_data)
+        assert report.status == HealthState.CRITICAL
+        assert "Disk 97%" in report.issues
+
+

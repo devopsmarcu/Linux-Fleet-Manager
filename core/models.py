@@ -16,6 +16,12 @@ class HostStatusEnum(enum.StrEnum):
     ERROR = "ERROR"
 
 
+class OperationStatus(enum.StrEnum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    WARNING = "WARNING"
+
+
 class ChangeState(enum.StrEnum):
     UNCHANGED = "unchanged"
     CHANGED = "changed"
@@ -196,3 +202,252 @@ class HostSystemInfo(BaseModel):
         parts.append(f"{minutes}m")
         return " ".join(parts)
 
+
+# ---------------------------------------------------------------------------
+# Package Management models
+# ---------------------------------------------------------------------------
+
+
+class PackageAction(enum.StrEnum):
+    INSTALL = "install"
+    REMOVE = "remove"
+
+
+class PackageHostResult(BaseModel):
+    """Resultado da operação de pacote em um único host."""
+
+    host: str
+    action: PackageAction
+    package: str
+    success: bool
+    changed: bool = False
+    pkg_manager: str | None = None
+    distribution: str | None = None
+    msg: str | None = None
+    error: str | None = None
+    duration_seconds: float = 0.0
+    executed_at: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def status_label(self) -> str:
+        if self.success:
+            return "OK"
+        return "FAIL"
+
+
+class PackageReport(BaseModel):
+    """Relatório agregado de uma operação de pacote em múltiplos hosts."""
+
+    package: str
+    action: PackageAction
+    targets: str = "all"
+    results: list[PackageHostResult] = Field(default_factory=list)
+    started_at: datetime = Field(default_factory=datetime.now)
+    finished_at: datetime | None = None
+    duration_seconds: float = 0.0
+
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @property
+    def success_count(self) -> int:
+        return sum(1 for r in self.results if r.success)
+
+    @property
+    def failed_count(self) -> int:
+        return sum(1 for r in self.results if not r.success)
+
+    @property
+    def changed_count(self) -> int:
+        return sum(1 for r in self.results if r.changed)
+
+    def finalize(self) -> None:
+        if self.finished_at is None:
+            self.finished_at = datetime.now()
+        self.duration_seconds = (self.finished_at - self.started_at).total_seconds()
+
+
+class HealthState(enum.StrEnum):
+    HEALTHY = "HEALTHY"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+
+
+class CheckItemResult(BaseModel):
+    name: str
+    passed: bool
+    state: HealthState = HealthState.HEALTHY
+    details: str | None = None
+
+
+class HostHealthReport(BaseModel):
+    """Relatório completo de saúde de um único host."""
+
+    host: str = Field(..., description="Nome do host no inventário")
+    address: str = Field(default="", description="Endereço IP ou hostname de conexão")
+    status: HealthState = HealthState.HEALTHY
+    issues: list[str] = Field(default_factory=list)
+    checks: list[CheckItemResult] = Field(default_factory=list)
+    raw_facts: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    checked_at: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def issues_display(self) -> str:
+        if not self.issues or self.status == HealthState.HEALTHY:
+            return "-"
+        return ", ".join(self.issues)
+
+
+# ---------------------------------------------------------------------------
+# Update models
+# ---------------------------------------------------------------------------
+
+
+class UpdateHostResult(BaseModel):
+    """Resultado da atualização de sistema em um único host."""
+
+    host: str
+    success: bool
+    changed: bool = False
+    packages_updated: int = 0
+    pkg_manager: str | None = None
+    distribution: str | None = None
+    error: str | None = None
+    duration_seconds: float = 0.0
+    executed_at: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def status_label(self) -> str:
+        return "OK" if self.success else "FAIL"
+
+
+class UpdateReport(BaseModel):
+    """Relatório agregado de atualização em múltiplos hosts."""
+
+    targets: str = "all"
+    results: list[UpdateHostResult] = Field(default_factory=list)
+    started_at: datetime = Field(default_factory=datetime.now)
+    finished_at: datetime | None = None
+    duration_seconds: float = 0.0
+
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @property
+    def success_count(self) -> int:
+        return sum(1 for r in self.results if r.success)
+
+    @property
+    def failed_count(self) -> int:
+        return sum(1 for r in self.results if not r.success)
+
+    @property
+    def changed_count(self) -> int:
+        return sum(1 for r in self.results if r.changed)
+
+    @property
+    def total_packages_updated(self) -> int:
+        return sum(r.packages_updated for r in self.results)
+
+    def finalize(self) -> None:
+        if self.finished_at is None:
+            self.finished_at = datetime.now()
+        self.duration_seconds = (self.finished_at - self.started_at).total_seconds()
+
+
+# ---------------------------------------------------------------------------
+# Maintenance models
+# ---------------------------------------------------------------------------
+
+
+class MaintenanceCheckState(enum.StrEnum):
+    OK = "OK"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+    SKIPPED = "SKIPPED"
+
+
+class MaintenanceCheckItem(BaseModel):
+    """Resultado de uma verificação individual de manutenção."""
+
+    name: str
+    state: MaintenanceCheckState = MaintenanceCheckState.OK
+    value: str | None = None
+    details: str | None = None
+
+
+class MaintenanceHostReport(BaseModel):
+    """Relatório de manutenção completo de um único host."""
+
+    host: str
+    address: str = ""
+    overall_state: MaintenanceCheckState = MaintenanceCheckState.OK
+    checks: list[MaintenanceCheckItem] = Field(default_factory=list)
+    error: str | None = None
+    checked_at: datetime = Field(default_factory=datetime.now)
+
+    # Métricas brutas para o relatório detalhado
+    distribution: str | None = None
+    pending_updates: int = 0
+    cache_bytes: int = 0
+    tmp_bytes: int = 0
+    failed_services: list[str] = Field(default_factory=list)
+    active_services: int = 0
+    orphan_packages: int = 0
+
+    @property
+    def cache_display(self) -> str:
+        return _bytes_human(self.cache_bytes)
+
+    @property
+    def tmp_display(self) -> str:
+        return _bytes_human(self.tmp_bytes)
+
+    @property
+    def status_label(self) -> str:
+        return self.overall_state.value
+
+
+class MaintenanceReport(BaseModel):
+    """Relatório agregado de manutenção de todos os hosts."""
+
+    targets: str = "all"
+    clean_requested: bool = False
+    host_reports: list[MaintenanceHostReport] = Field(default_factory=list)
+    started_at: datetime = Field(default_factory=datetime.now)
+    finished_at: datetime | None = None
+    duration_seconds: float = 0.0
+
+    @property
+    def total(self) -> int:
+        return len(self.host_reports)
+
+    @property
+    def healthy_count(self) -> int:
+        return sum(1 for r in self.host_reports if r.overall_state == MaintenanceCheckState.OK)
+
+    @property
+    def warning_count(self) -> int:
+        return sum(1 for r in self.host_reports if r.overall_state == MaintenanceCheckState.WARNING)
+
+    @property
+    def critical_count(self) -> int:
+        return sum(1 for r in self.host_reports if r.overall_state == MaintenanceCheckState.CRITICAL)
+
+    def finalize(self) -> None:
+        if self.finished_at is None:
+            self.finished_at = datetime.now()
+        self.duration_seconds = (self.finished_at - self.started_at).total_seconds()
+
+
+def _bytes_human(n: int) -> str:
+    """Converte bytes para string legível (KB/MB/GB)."""
+    if n <= 0:
+        return "0 B"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n //= 1024  # type: ignore[assignment]
+    return f"{n:.1f} PB"

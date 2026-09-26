@@ -1,0 +1,52 @@
+---
+# Linux Fleet Manager — Package Management Playbook
+# Uso: ansible-playbook package_manage.yml -e "pkg_name=htop pkg_state=present"
+#
+# Variáveis obrigatórias:
+#   pkg_name  : nome do pacote (ex: htop, nginx)
+#   pkg_state : "present" para instalar, "absent" para remover
+#
+# O módulo ansible.builtin.package detecta automaticamente o package manager
+# do host-alvo (apt, dnf, yum, pacman, etc.), sem precisar especificar.
+# Extensível no futuro sem alterar o playbook.
+
+- name: LFM — Package Management
+  hosts: "{{ lfm_targets | default('all') }}"
+  gather_facts: true
+  any_errors_fatal: false
+
+  tasks:
+    - name: Validar variáveis obrigatórias
+      ansible.builtin.assert:
+        that:
+          - pkg_name is defined
+          - pkg_name | length > 0
+          - pkg_state in ['present', 'absent']
+        fail_msg: >
+          Variáveis inválidas: pkg_name='{{ pkg_name | default("") }}'
+          pkg_state='{{ pkg_state | default("") }}'
+      tags: [validate]
+
+    - name: "{{ 'Instalar' if pkg_state == 'present' else 'Remover' }} pacote '{{ pkg_name }}'"
+      ansible.builtin.package:
+        name: "{{ pkg_name }}"
+        state: "{{ pkg_state }}"
+      become: true
+      register: pkg_result
+      tags: [package]
+
+    - name: Exportar resultado estruturado
+      ansible.builtin.set_fact:
+        lfm_package_result:
+          pkg_name: "{{ pkg_name }}"
+          pkg_state: "{{ pkg_state }}"
+          changed: "{{ pkg_result.changed }}"
+          failed: false
+          pkg_manager: "{{ ansible_pkg_mgr | default('unknown') }}"
+          distribution: "{{ ansible_distribution | default('unknown') }}"
+          distribution_version: "{{ ansible_distribution_version | default('') }}"
+          msg: "{{ pkg_result.msg | default('') }}"
+          stdout: "{{ pkg_result.stdout | default('') }}"
+          stderr: "{{ pkg_result.stderr | default('') }}"
+          rc: "{{ pkg_result.rc | default(0) }}"
+      tags: [result]

@@ -1,0 +1,47 @@
+---
+- name: Executar health check completo do sistema nas máquinas Linux
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Checar serviços com falha no systemd
+      ansible.builtin.shell: "systemctl list-units --state=failed --no-legend --plain 2>/dev/null | awk '{print $1}'"
+      register: failed_services_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Checar resolução DNS
+      ansible.builtin.shell: "getent hosts 1.1.1.1 2>/dev/null || getent hosts localhost 2>/dev/null"
+      register: dns_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Checar atualizações pendentes (Debian/Ubuntu)
+      ansible.builtin.shell: "apt-get -s upgrade 2>/dev/null | grep -E '^[0-9]+ upgraded' | awk '{print $1}'"
+      register: apt_updates_check
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'Debian'
+
+    - name: Checar atualizações pendentes (RedHat/Fedora)
+      ansible.builtin.shell: "dnf check-update --quiet 2>/dev/null | grep -v '^$' | wc -l"
+      register: dnf_updates_check
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'RedHat'
+
+    - name: Consolidar dados de health check para LFM
+      ansible.builtin.set_fact:
+        lfm_health_data:
+          hostname: "{{ ansible_hostname | default(inventory_hostname) }}"
+          default_ip: "{{ ansible_default_ipv4.address | default(ansible_host | default(inventory_hostname)) }}"
+          mounts: "{{ ansible_mounts | default([]) }}"
+          mem_total_mb: "{{ ansible_memtotal_mb | default(0) }}"
+          mem_free_mb: "{{ ansible_memfree_mb | default(0) }}"
+          mem_available_mb: "{{ ansible_memory_mb.nocache.free | default(ansible_memfree_mb | default(0)) }}"
+          load_1m: "{{ ansible_loadavg['1m'] | default(0.0) }}"
+          load_5m: "{{ ansible_loadavg['5m'] | default(0.0) }}"
+          cpu_cores: "{{ ansible_processor_vcpus | default(ansible_processor_count | default(1)) }}"
+          failed_services: "{{ (failed_services_check.stdout | default('')).splitlines() | select('truthy') | list }}"
+          dns_ok: "{{ dns_check.rc == 0 if dns_check is defined else true }}"
+          network_ok: "{{ ansible_default_ipv4.address is defined and ansible_default_ipv4.address | length > 0 }}"
+          pending_updates: "{{ (apt_updates_check.stdout | default('0') | int) if (ansible_os_family | default('') == 'Debian') else ((dnf_updates_check.stdout | default('0') | int) if (ansible_os_family | default('') == 'RedHat') else 0) }}"
