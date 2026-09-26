@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+wheels/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+cov.xml
+coverage.xml
+*.cover
+
+# mypy / type check
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# LFM - Runtime data
+logs/*.log
+logs/*.jsonl
+reports/*
+!reports/.gitkeep
+!logs/.gitkeep
+
+# Inventory / secrets (NÃO commitar)
+inventory/hosts.yaml
+inventory/hosts.yml
+inventory/group_vars/*.yaml
+inventory/group_vars/*.yml
+!inventory/group_vars/*.example
+inventory/host_vars/*.yaml
+inventory/host_vars/*.yml
+!inventory/host_vars/*.example
+config.yaml
+config.yml
+.env
+*.vault
+ansible-vault-password
+
+# Ansible
+*.retry
+ansible/facts.d/
+__pycache__/
