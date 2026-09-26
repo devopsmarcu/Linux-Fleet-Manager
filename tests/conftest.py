@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ from core.config import Settings, get_settings
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None, None, None]:
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -38,7 +39,7 @@ def settings(tmp_project: Path) -> Settings:
 
 
 @pytest.fixture
-def quiet_logger() -> logging.Logger:
+def quiet_logger() -> Generator[logging.Logger, None, None]:
     logger = logging.getLogger("lfm")
     previous_level = logger.level
     logger.setLevel(logging.CRITICAL + 1)

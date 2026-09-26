@@ -119,3 +119,80 @@ class InventorySummary(BaseModel):
     total_groups: int = 0
     groups: dict[str, int] = Field(default_factory=dict)
     hosts: list[Host] = Field(default_factory=list)
+
+
+class HostSystemInfo(BaseModel):
+    """Informações completas do sistema coletadas via Ansible de um host."""
+
+    host: str = Field(..., description="Nome do host no inventário")
+    address: str = Field(default="", description="Endereço IP ou hostname do inventário")
+    status: HostStatusEnum = HostStatusEnum.UNKNOWN
+    hostname: str | None = None
+    ip: str | None = None
+    distribution: str | None = None
+    distribution_version: str | None = None
+    kernel: str | None = None
+    architecture: str | None = None
+    cpu_model: str | None = None
+    cpu_cores: int | None = None
+    memory_total_mb: int | None = None
+    disk_total_gb: float | None = None
+    disk_used_gb: float | None = None
+    uptime_seconds: int | None = None
+    remote_user: str | None = None
+    python_version: str | None = None
+    services: list[str] = Field(default_factory=list)
+    pending_updates: int | None = 0
+    error_message: str | None = None
+    checked_at: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def os_display(self) -> str:
+        if self.status != HostStatusEnum.ONLINE or not self.distribution:
+            return "N/A"
+        ver = f" {self.distribution_version}" if self.distribution_version else ""
+        return f"{self.distribution}{ver}"
+
+    @property
+    def cpu_display(self) -> str:
+        if self.status != HostStatusEnum.ONLINE:
+            return "N/A"
+        cores = f"{self.cpu_cores} cores" if self.cpu_cores else ""
+        if self.cpu_model:
+            return f"{self.cpu_model} ({cores})" if cores else self.cpu_model
+        return cores or "N/A"
+
+    @property
+    def ram_display(self) -> str:
+        if self.status != HostStatusEnum.ONLINE or not self.memory_total_mb:
+            return "N/A"
+        if self.memory_total_mb >= 1024:
+            return f"{self.memory_total_mb / 1024:.1f} GB"
+        return f"{self.memory_total_mb} MB"
+
+    @property
+    def disk_display(self) -> str:
+        if self.status != HostStatusEnum.ONLINE:
+            return "N/A"
+        if self.disk_used_gb is not None and self.disk_total_gb is not None:
+            return f"{self.disk_used_gb:.1f} / {self.disk_total_gb:.1f} GB"
+        if self.disk_total_gb is not None and self.disk_total_gb > 0:
+            return f"{self.disk_total_gb:.1f} GB"
+        return "N/A"
+
+    @property
+    def uptime_display(self) -> str:
+        if self.status != HostStatusEnum.ONLINE or not self.uptime_seconds:
+            return "N/A"
+        total = int(self.uptime_seconds)
+        days, remainder = divmod(total, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, _ = divmod(remainder, 60)
+        parts = []
+        if days > 0:
+            parts.append(f"{days}d")
+        if hours > 0 or days > 0:
+            parts.append(f"{hours}h")
+        parts.append(f"{minutes}m")
+        return " ".join(parts)
+

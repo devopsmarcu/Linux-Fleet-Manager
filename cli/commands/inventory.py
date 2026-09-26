@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from core.exceptions import InventoryError, LFMError
-from core.inventory import InventoryManager
+from core.inventory import InventoryManager, SystemInfoCollector
 from core.logger import get_logger
+from core.models import HostStatusEnum, HostSystemInfo
 
 logger = get_logger("cli.commands.inventory")
 
@@ -38,16 +41,166 @@ def _manager() -> InventoryManager:
 @app.callback(invoke_without_command=True)
 def inventory_root(
     ctx: typer.Context,
-    list_all: bool = typer.Option(
+    host: str | None = typer.Option(
+        None,
+        "--host",
+        "-H",
+        help="Mostrar somente o host solicitado.",
+    ),
+    group: str | None = typer.Option(
+        None,
+        "--group",
+        "-g",
+        help="Filtrar por grupo do inventário.",
+    ),
+    as_json: bool = typer.Option(
         False,
-        "--list",
-        "-l",
-        help="Lista todos os hosts (equivalente a lfm inventory list).",
+        "--json",
+        help="Retornar os dados em JSON válido.",
+    ),
+    timeout: int = typer.Option(
+        10,
+        "--timeout",
+        "-t",
+        help="Timeout em segundos por host SSH.",
+        min=1,
+        max=300,
     ),
 ) -> None:
-    """[bold]lfm inventory[/bold] — gerencia e visualiza o inventário Ansible."""
-    if ctx.invoked_subcommand is None or list_all:
-        list_hosts(group=None, host_name=None, verbose=False)
+    """[bold]lfm inventory[/bold] — descobre e exibe informações detalhadas dos hosts Linux."""
+    if ctx.invoked_subcommand is None:
+        if isinstance(host, typer.models.OptionInfo):
+            host = None
+        if isinstance(group, typer.models.OptionInfo):
+            group = None
+        if isinstance(as_json, typer.models.OptionInfo):
+            as_json = False
+        if isinstance(timeout, typer.models.OptionInfo):
+            timeout = 10
+
+        collect_and_display(host_name=host, group=group, as_json=as_json, timeout=timeout)
+
+
+@app.command("collect")
+def collect_cmd(
+    host: str | None = typer.Option(
+        None,
+        "--host",
+        "-H",
+        help="Filtrar por host específico.",
+    ),
+    group: str | None = typer.Option(
+        None,
+        "--group",
+        "-g",
+        help="Filtrar por grupo específico.",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Exibir em formato JSON.",
+    ),
+    timeout: int = typer.Option(
+        10,
+        "--timeout",
+        "-t",
+        help="Timeout em segundos.",
+    ),
+) -> None:
+    """Executa a coleta detalhada via Ansible e exibe tabela ou JSON."""
+    if isinstance(host, typer.models.OptionInfo):
+        host = None
+    if isinstance(group, typer.models.OptionInfo):
+        group = None
+    if isinstance(as_json, typer.models.OptionInfo):
+        as_json = False
+    if isinstance(timeout, typer.models.OptionInfo):
+        timeout = 10
+
+    collect_and_display(host_name=host, group=group, as_json=as_json, timeout=timeout)
+
+
+def collect_and_display(
+    host_name: str | None = None,
+    group: str | None = None,
+    as_json: bool = False,
+    timeout: int = 10,
+) -> None:
+    manager = _manager()
+    collector = SystemInfoCollector(inventory_manager=manager)
+    items: list[HostSystemInfo] = collector.collect(
+        group=group, host_name=host_name, timeout=timeout
+    )
+
+    if as_json:
+        payload = [item.model_dump(mode="json") for item in items]
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return
+
+    console = Console()
+    console.print()
+    console.print("[bold cyan]Linux Fleet Manager[/bold cyan] · [dim]Inventário de Hosts[/dim]")
+    console.print("─" * 60)
+
+    if not items:
+        console.print(
+            Panel("Nenhum host encontrado.", title="Inventário Vazio", border_style="yellow")
+        )
+        return
+
+    table = Table(show_lines=False)
+    table.add_column("HOST", style="cyan", no_wrap=True)
+    table.add_column("IP", style="green")
+    table.add_column("OS", style="bold")
+    table.add_column("VERSION")
+    table.add_column("KERNEL", style="dim")
+    table.add_column("CPU", justify="right")
+    table.add_column("RAM", justify="right")
+    table.add_column("DISK", justify="right")
+    table.add_column("UPTIME", justify="right")
+
+    for item in items:
+        if item.status == HostStatusEnum.ONLINE:
+            os_val = item.distribution or "Linux"
+            ver_val = item.distribution_version or "—"
+            kernel_val = item.kernel or "—"
+            cpu_val = str(item.cpu_cores) if item.cpu_cores else "—"
+            ram_val = item.ram_display
+            disk_val = item.disk_display
+            uptime_val = item.uptime_display
+            ip_val = item.ip or item.address
+        else:
+            os_val = "[bold red]OFFLINE[/bold red]"
+            ver_val = "[dim]—[/dim]"
+            kernel_val = "[dim]—[/dim]"
+            cpu_val = "[dim]—[/dim]"
+            ram_val = "[dim]—[/dim]"
+            disk_val = "[dim]—[/dim]"
+            uptime_val = "[dim]—[/dim]"
+            ip_val = item.address or "—"
+
+        table.add_row(
+            item.host,
+            ip_val,
+            os_val,
+            ver_val,
+            kernel_val,
+            cpu_val,
+            ram_val,
+            disk_val,
+            uptime_val,
+        )
+
+    console.print(table)
+    console.print()
+    total = len(items)
+    online = sum(1 for i in items if i.status == HostStatusEnum.ONLINE)
+    offline = total - online
+    console.print(
+        f"[bold]Total:[/bold] {total}  ·  "
+        f"[bold green]Online:[/bold green] {online}  ·  "
+        f"[bold red]Offline:[/bold red] {offline}"
+    )
 
 
 @app.command("list")
@@ -71,7 +224,7 @@ def list_hosts(
         help="Mostrar detalhes adicionais (usuário SSH, porta, conexão).",
     ),
 ) -> None:
-    """Lista todos os hosts cadastrados no inventário."""
+    """Lista rápida dos hosts cadastrados no inventário (sem rodar Ansible)."""
     if isinstance(group, typer.models.OptionInfo):
         group = None
     if isinstance(host_name, typer.models.OptionInfo):
@@ -86,36 +239,14 @@ def list_hosts(
         logger.error(str(exc), extra={"lfm_error_details": exc.details})
         raise typer.Exit(code=2) from exc
 
-    logger.info(
-        "Inventário listado",
-        extra={
-            "lfm_filter_group": group or "all",
-            "lfm_filter_host": host_name or "all",
-            "lfm_hosts_count": len(hosts),
-        },
-    )
-
     console = Console()
     if not hosts:
-        msg = "Nenhum host encontrado no inventário."
-        if group:
-            msg += f" Filtro: grupo=[yellow]{group}[/yellow]"
-        if host_name:
-            msg += f" Filtro: host=[yellow]{host_name}[/yellow]"
-        msg += (
-            "\n[dim]Descomente as linhas de exemplo em [bold]ansible/inventory/hosts.ini[/bold]"
-            " ou adicione seus próprios hosts.[/dim]"
+        console.print(
+            Panel("Nenhum host cadastrado.", title="Inventário Vazio", border_style="yellow")
         )
-        console.print(Panel(msg, title="Inventário Vazio", border_style="yellow"))
         return
 
-    title = "Inventário LFM"
-    if group:
-        title += f" · grupo: {group}"
-    if host_name:
-        title += f" · host: {host_name}"
-
-    table = Table(title=f"{title} ({len(hosts)} host(s))", show_lines=False)
+    table = Table(title="Inventário LFM (Cadastrado)", show_lines=False)
     table.add_column("Host", style="cyan", no_wrap=True)
     table.add_column("Endereço", style="green")
     table.add_column("Porta", justify="right")
@@ -133,11 +264,6 @@ def list_hosts(
         table.add_row(*row)
 
     console.print(table)
-
-    summary = manager.summary()
-    console.print(
-        f"[dim]Total grupos cadastrados: [bold]{summary.total_groups}[/bold][/dim]"
-    )
 
 
 @app.command("groups")

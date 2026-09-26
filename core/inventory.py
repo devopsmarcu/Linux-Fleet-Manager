@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from core.config import get_settings
 from core.exceptions import InventoryError
 from core.logger import get_logger
-from core.models import Host, InventorySummary
+from core.models import Host, HostStatusEnum, HostSystemInfo, InventorySummary
 
 logger = get_logger("inventory")
 
@@ -245,3 +246,168 @@ class InventoryManager:
                         self._hosts[host_name].user = loaded["ansible_user"]
                     if "ansible_port" in loaded:
                         self._hosts[host_name].port = int(loaded["ansible_port"])
+
+
+class SystemInfoCollector:
+    """Coleta e normaliza informações detalhadas dos hosts via Ansible playbook collect_info.yml."""
+
+    def __init__(
+        self,
+        inventory_manager: InventoryManager | None = None,
+        executor: Any | None = None,
+    ) -> None:
+        self.inventory_manager = inventory_manager or InventoryManager()
+        if executor is None:
+            from ansible.runner import AnsibleExecutor
+            self.executor = AnsibleExecutor(inventory_file=self.inventory_manager.inventory_file)
+        else:
+            self.executor = executor
+
+    def collect(
+        self,
+        targets: str = "all",
+        group: str | None = None,
+        host_name: str | None = None,
+        timeout: int | None = None,
+    ) -> list[HostSystemInfo]:
+        """Executa a coleta no playbook e retorna lista de HostSystemInfo estruturados."""
+        target_pattern = host_name or group or targets or "all"
+        known_hosts = {h.name: h for h in self.inventory_manager.list_hosts()}
+
+        try:
+            expected_hosts = self.inventory_manager.list_hosts(group=group, host_name=host_name)
+        except Exception:
+            expected_hosts = list(known_hosts.values())
+
+        logger.info(
+            "Iniciando coleta de informações do inventário LFM",
+            extra={"lfm_targets": target_pattern, "lfm_timeout": timeout},
+        )
+
+        try:
+            op_result = self.executor.playbook(
+                playbook="collect_info.yml",
+                targets=target_pattern,
+                timeout=timeout,
+                become=False,
+            )
+        except Exception as exc:
+            logger.error(
+                "Falha na execução do playbook de coleta",
+                extra={"lfm_error": str(exc)},
+            )
+            op_result = None
+
+        collected_map: dict[str, HostSystemInfo] = {}
+
+        if op_result:
+            for task in op_result.task_results:
+                h_name = task.host
+                host_obj = known_hosts.get(h_name, Host(name=h_name, address=h_name))
+
+                if task.unreachable or task.failed:
+                    default_err = "Host inalcançável" if task.unreachable else "Falha na coleta"
+                    msg = task.msg or task.stderr or default_err
+                    collected_map[h_name] = HostSystemInfo(
+                        host=h_name,
+                        address=host_obj.address,
+                        status=HostStatusEnum.OFFLINE if task.unreachable else HostStatusEnum.ERROR,
+                        error_message=msg,
+                    )
+                else:
+                    task_data = task.data if isinstance(task.data, dict) else {}
+                    raw_facts = task_data.get("ansible_facts")
+                    facts = raw_facts if isinstance(raw_facts, dict) else {}
+                    sys_info = facts.get("lfm_system_info") or task_data.get("lfm_system_info")
+                    if sys_info and isinstance(sys_info, dict):
+                        collected_map[h_name] = self.normalize_host_info(h_name, host_obj, sys_info)
+                    elif h_name not in collected_map:
+                        collected_map[h_name] = HostSystemInfo(
+                            host=h_name,
+                            address=host_obj.address,
+                            status=HostStatusEnum.ONLINE,
+                        )
+
+        # Garantir que todos os hosts esperados pelo filtro apareçam na lista final
+        for h in expected_hosts:
+            if h.name not in collected_map:
+                collected_map[h.name] = HostSystemInfo(
+                    host=h.name,
+                    address=h.address,
+                    status=HostStatusEnum.OFFLINE,
+                    error_message="Sem resposta do Ansible",
+                )
+
+        return sorted(collected_map.values(), key=lambda s: s.host)
+
+    @staticmethod
+    def normalize_host_info(
+        host_name: str,
+        host_obj: Host,
+        raw_info: dict[str, Any],
+    ) -> HostSystemInfo:
+        """Normaliza dict bruto de fatos em objeto HostSystemInfo tipado."""
+        mounts = raw_info.get("mounts") or []
+        disk_total_gb: float | None = None
+        disk_used_gb: float | None = None
+
+        root_mount = None
+        for m in mounts:
+            if isinstance(m, dict) and m.get("mount") == "/":
+                root_mount = m
+                break
+
+        target_mount = root_mount or (mounts[0] if mounts and isinstance(mounts[0], dict) else None)
+        if target_mount:
+            total_b = target_mount.get("size_total") or (
+                target_mount.get("block_total", 0) * target_mount.get("block_size", 0)
+            )
+            avail_b = target_mount.get("size_available") or (
+                target_mount.get("block_available", 0) * target_mount.get("block_size", 0)
+            )
+            if total_b and total_b > 0:
+                disk_total_gb = round(total_b / (1024**3), 1)
+                disk_used_gb = round((total_b - avail_b) / (1024**3), 1)
+
+        raw_updates = raw_info.get("pending_updates", 0)
+        try:
+            pending_updates = int(raw_updates)
+        except (ValueError, TypeError):
+            pending_updates = 0
+
+        try:
+            mem_total = int(raw_info.get("memory_total_mb", 0) or 0)
+        except (ValueError, TypeError):
+            mem_total = 0
+
+        try:
+            cpu_cores = int(raw_info.get("cpu_cores", 0) or 0)
+        except (ValueError, TypeError):
+            cpu_cores = 1
+
+        try:
+            uptime = int(raw_info.get("uptime_seconds", 0) or 0)
+        except (ValueError, TypeError):
+            uptime = 0
+
+        return HostSystemInfo(
+            host=host_name,
+            address=str(raw_info.get("ip") or host_obj.address),
+            status=HostStatusEnum.ONLINE,
+            hostname=str(raw_info.get("hostname") or host_name),
+            ip=str(raw_info.get("ip") or host_obj.address),
+            distribution=str(raw_info.get("distribution") or "Linux"),
+            distribution_version=str(raw_info.get("distribution_version") or ""),
+            kernel=str(raw_info.get("kernel") or ""),
+            architecture=str(raw_info.get("architecture") or ""),
+            cpu_model=str(raw_info.get("cpu_model") or ""),
+            cpu_cores=cpu_cores,
+            memory_total_mb=mem_total,
+            disk_total_gb=disk_total_gb,
+            disk_used_gb=disk_used_gb,
+            uptime_seconds=uptime,
+            remote_user=str(raw_info.get("remote_user") or host_obj.user or ""),
+            python_version=str(raw_info.get("python_version") or ""),
+            services=list(raw_info.get("services") or []),
+            pending_updates=pending_updates,
+        )

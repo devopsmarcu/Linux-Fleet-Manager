@@ -1,27 +1,42 @@
 ---
-- name: Coletar informações básicas das máquinas Linux
+- name: Coletar informações detalhadas do sistema Linux para o LFM
   hosts: all
   gather_facts: true
   tasks:
-    - name: Garantir facts completos (exceto facter/ohai)
-      ansible.builtin.setup:
-        gather_subset:
-          - "all"
-          - "!facter"
-          - "!ohai"
-      register: facts_result
+    - name: Coletar service facts se disponível
+      ansible.builtin.service_facts:
+      ignore_errors: true
+      register: service_facts_result
 
-    - name: Consolidar facts relevantes para o LFM
+    - name: Checar atualizações pendentes (apt - Debian/Ubuntu)
+      ansible.builtin.shell: "apt-get -s upgrade 2>/dev/null | grep -E '^[0-9]+ upgraded' | awk '{print $1}'"
+      register: apt_updates
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'Debian'
+
+    - name: Checar atualizações pendentes (dnf/yum - RHEL/Fedora)
+      ansible.builtin.shell: "dnf check-update --quiet 2>/dev/null | grep -v '^$' | wc -l"
+      register: dnf_updates
+      ignore_errors: true
+      changed_when: false
+      when: ansible_os_family == 'RedHat'
+
+    - name: Consolidar fatos do sistema para LFM
       ansible.builtin.set_fact:
         lfm_system_info:
           hostname: "{{ ansible_hostname | default(inventory_hostname) }}"
-          distribution: "{{ ansible_distribution | default('unknown') }}"
+          ip: "{{ ansible_default_ipv4.address | default(ansible_all_ipv4_addresses[0] | default(ansible_host | default(inventory_hostname))) }}"
+          distribution: "{{ ansible_distribution | default('Linux') }}"
           distribution_version: "{{ ansible_distribution_version | default('') }}"
           kernel: "{{ ansible_kernel | default('') }}"
           architecture: "{{ ansible_architecture | default('') }}"
+          cpu_model: "{{ ansible_processor[1] | default(ansible_processor[0] | default('Generic CPU')) }}"
+          cpu_cores: "{{ ansible_processor_vcpus | default(ansible_processor_count | default(1)) }}"
           memory_total_mb: "{{ ansible_memtotal_mb | default(0) }}"
-          cpu_cores: "{{ ansible_processor_vcpus | default(ansible_processor_count | default(0)) }}"
-          disk_info: "{{ ansible_mounts | default([]) }}"
-          interfaces: "{{ ansible_interfaces | default([]) }}"
-          last_boot: "{{ ansible_date_time.iso8601 | default('') }}"
+          mounts: "{{ ansible_mounts | default([]) }}"
           uptime_seconds: "{{ ansible_uptime_seconds | default(0) }}"
+          remote_user: "{{ ansible_user_id | default(ansible_env.USER | default('')) }}"
+          python_version: "{{ ansible_python_version | default(ansible_python.version.full | default('')) }}"
+          pending_updates: "{{ (apt_updates.stdout | default('0') | int) if (ansible_os_family | default('') == 'Debian') else ((dnf_updates.stdout | default('0') | int) if (ansible_os_family | default('') == 'RedHat') else 0) }}"
+          services: "{{ (ansible_services.keys() | list) if ansible_services is defined else [] }}"
