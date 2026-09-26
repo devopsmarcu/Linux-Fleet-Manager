@@ -1,0 +1,22 @@
+---
+# Variáveis aplicadas a todos os hosts do grupo `linux` e filhos (ubuntu, debian, xubuntu)
+# Estas vars são mergeadas com [all:vars] do hosts.ini
+# Precedência Ansible: host_vars > group_vars/* > inventory vars (INI)
+
+ansible_user: "CHANGE_ME"
+
+# Privilégio
+ansible_become: true
+ansible_become_method: sudo
+ansible_become_user: root
+
+# Timeouts SSH
+ansible_ssh_timeout: 10
+ansible_ssh_retries: 1
+
+# Performance e segurança SSH
+ansible_ssh_common_args: >-
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ControlMaster=auto
+  -o ControlPersist=30s

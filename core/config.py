@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     log_max_bytes: int = 10 * 1024 * 1024
     log_backup_count: int = 7
 
-    ansible_inventory_file: str = "hosts.yaml"
+    ansible_inventory_file: str = "hosts.ini"
     ansible_forks: int = 10
     ansible_timeout: int = 30
     ansible_cfg_path: Path | None = None

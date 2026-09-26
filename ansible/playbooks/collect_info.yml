@@ -1,0 +1,27 @@
+---
+- name: Coletar informações básicas das máquinas Linux
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Garantir facts completos (exceto facter/ohai)
+      ansible.builtin.setup:
+        gather_subset:
+          - "all"
+          - "!facter"
+          - "!ohai"
+      register: facts_result
+
+    - name: Consolidar facts relevantes para o LFM
+      ansible.builtin.set_fact:
+        lfm_system_info:
+          hostname: "{{ ansible_hostname | default(inventory_hostname) }}"
+          distribution: "{{ ansible_distribution | default('unknown') }}"
+          distribution_version: "{{ ansible_distribution_version | default('') }}"
+          kernel: "{{ ansible_kernel | default('') }}"
+          architecture: "{{ ansible_architecture | default('') }}"
+          memory_total_mb: "{{ ansible_memtotal_mb | default(0) }}"
+          cpu_cores: "{{ ansible_processor_vcpus | default(ansible_processor_count | default(0)) }}"
+          disk_info: "{{ ansible_mounts | default([]) }}"
+          interfaces: "{{ ansible_interfaces | default([]) }}"
+          last_boot: "{{ ansible_date_time.iso8601 | default('') }}"
+          uptime_seconds: "{{ ansible_uptime_seconds | default(0) }}"

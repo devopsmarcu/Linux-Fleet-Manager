@@ -39,14 +39,14 @@ class TestInventoryCommand:
     def test_list_default(self):
         result = runner.invoke(app, ["inventory", "list"])
         assert result.exit_code == 0
-        assert "web-01" in result.stdout
-        assert "db-01" in result.stdout
+        assert "ubuntu-01" in result.stdout
+        assert "debian-01" in result.stdout
 
     def test_list_with_group_filter(self):
         result = runner.invoke(app, ["inventory", "list", "--group", "ubuntu"])
         assert result.exit_code == 0
-        assert "web-01" in result.stdout
-        assert "db-01" not in result.stdout
+        assert "ubuntu-01" in result.stdout
+        assert "debian-01" not in result.stdout
 
     def test_groups(self):
         result = runner.invoke(app, ["inventory", "groups"])
@@ -59,14 +59,14 @@ class TestStatusCommand:
     def test_check_default(self):
         result = runner.invoke(app, ["status", "check"])
         assert result.exit_code == 0
-        assert "Status dos Hosts" in result.stdout
-        assert "Resumo:" in result.stdout
+        assert "Linux Fleet Manager" in result.stdout
+        assert "Total:" in result.stdout
 
     def test_check_specific_host(self):
-        result = runner.invoke(app, ["status", "check", "--host", "web-01"])
+        result = runner.invoke(app, ["status", "check", "--host", "ubuntu-01"])
         assert result.exit_code == 0
-        assert "web-01" in result.stdout
-        assert "db-01" not in result.stdout
+        assert "ubuntu-01" in result.stdout
+        assert "debian-01" not in result.stdout
 
 
 class TestHealthCommand:

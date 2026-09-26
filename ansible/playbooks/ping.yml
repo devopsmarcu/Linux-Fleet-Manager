@@ -1,0 +1,13 @@
+---
+- name: Ping de conectividade em todos os hosts alvo
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Testar conexão SSH via módulo ping
+      ansible.builtin.ping:
+      register: ping_result
+
+    - name: Exibir resultado detalhado (verbose)
+      ansible.builtin.debug:
+        var: ping_result
+        verbosity: 2
