@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich import print as rprint
 
+from cli.commands.health import app as health_app
+from cli.commands.inventory import app as inventory_app
+from cli.commands.status import app as status_app
 from core.config import get_settings
 from core.exceptions import LFMError
 from core.logger import get_logger
-
-from cli.commands.inventory import app as inventory_app
-from cli.commands.status import app as status_app
-from cli.commands.health import app as health_app
 
 logger = get_logger("cli.main")
 
@@ -33,13 +31,15 @@ app.add_typer(health_app, name="health", help="Executar health checks nos hosts.
 
 def _version_callback(value: bool) -> None:
     if value:
-        rprint(f"[bold cyan]{settings.project_name}[/bold cyan] v[bold green]{settings.version}[/bold green]")
+        name = f"[bold cyan]{settings.project_name}[/bold cyan]"
+        ver = f"[bold green]{settings.version}[/bold green]"
+        rprint(f"{name} v{ver}")
         raise typer.Exit()
 
 
 @app.callback()
 def main(
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None,
         "--version",
         "-V",
@@ -54,7 +54,7 @@ def main(
         help="Aumenta o nível de detalhe dos logs (DEBUG).",
         is_eager=True,
     ),
-    config_file: Optional[Path] = typer.Option(
+    config_file: Path | None = typer.Option(
         None,
         "--config",
         "-c",

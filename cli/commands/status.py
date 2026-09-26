@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -28,13 +27,13 @@ _MOCK_HOSTS = [
 
 @app.command()
 def check(
-    host: Optional[str] = typer.Option(
+    host: str | None = typer.Option(
         None,
         "--host",
         "-H",
         help="Verificar status de um host específico.",
     ),
-    group: Optional[str] = typer.Option(
+    group: str | None = typer.Option(
         None,
         "--group",
         "-g",
@@ -54,7 +53,8 @@ def check(
     console = Console()
     results = []
 
-    with Status("[bold cyan]Verificando status dos hosts...[/bold cyan]", console=console, spinner="dots"):
+    status_msg = "[bold cyan]Verificando status dos hosts...[/bold cyan]"
+    with Status(status_msg, console=console, spinner="dots"):
         for h in targets:
             t0 = time.perf_counter()
             time.sleep(0.15)
@@ -89,7 +89,8 @@ def check(
 
     ok_count = 0
     for r in results:
-        if r["status"] == "OK":
+        status_val = str(r["status"])
+        if status_val == "OK":
             status_style = "bold green"
             ok_count += 1
             latency_str = f"{r['latency_ms']} ms"
@@ -97,9 +98,9 @@ def check(
             status_style = "bold red"
             latency_str = "[dim]—[/dim]"
         table.add_row(
-            r["name"],
-            r["address"],
-            f"[{status_style}]{r['status']}[/{status_style}]",
+            str(r["name"]),
+            str(r["address"]),
+            f"[{status_style}]{status_val}[/{status_style}]",
             latency_str,
         )
 

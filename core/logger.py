@@ -3,14 +3,13 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import sys
-from pathlib import Path
+import types
 from typing import Any
 
 from rich.console import Console
 from rich.logging import RichHandler
 
 from core.config import Settings, get_settings
-
 
 _console = Console()
 
@@ -79,8 +78,14 @@ def setup_logger() -> logging.Logger:
     return logger
 
 
-def _make_excepthook(logger: logging.Logger):
-    def excepthook(exc_type, exc_value, exc_traceback):
+def _make_excepthook(
+    logger: logging.Logger,
+) -> types.FunctionType | Any:
+    def excepthook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_traceback: types.TracebackType | None,
+    ) -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return

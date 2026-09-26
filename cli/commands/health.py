@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -30,7 +29,7 @@ _MOCK_RESULTS = {
 
 @app.command()
 def run(
-    host: Optional[str] = typer.Option(
+    host: str | None = typer.Option(
         None,
         "--host",
         "-H",
@@ -56,7 +55,8 @@ def run(
 
     console = Console()
 
-    with Status("[bold cyan]Executando health checks...[/bold cyan]", console=console, spinner="dots"):
+    status_msg = "[bold cyan]Executando health checks...[/bold cyan]"
+    with Status(status_msg, console=console, spinner="dots"):
         time.sleep(0.6)
 
     table = Table(title=f"Health Check ({'rápido' if quick else 'completo'})")

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -21,13 +19,18 @@ _MOCK_HOSTS = [
     {"name": "web-01", "address": "192.168.1.10", "groups": "ubuntu,web", "os": "Ubuntu 24.04"},
     {"name": "web-02", "address": "192.168.1.11", "groups": "ubuntu,web", "os": "Ubuntu 24.04"},
     {"name": "db-01", "address": "192.168.1.20", "groups": "debian,db", "os": "Debian 12"},
-    {"name": "ws-01", "address": "192.168.1.30", "groups": "xubuntu,workstation", "os": "Xubuntu 24.04"},
+    {
+        "name": "ws-01",
+        "address": "192.168.1.30",
+        "groups": "xubuntu,workstation",
+        "os": "Xubuntu 24.04",
+    },
 ]
 
 
 @app.command("list")
 def list_hosts(
-    group: Optional[str] = typer.Option(
+    group: str | None = typer.Option(
         None,
         "--group",
         "-g",
@@ -44,7 +47,10 @@ def list_hosts(
     settings = get_settings()
     logger.info(
         "Listando inventário",
-        extra={"lfm_filter_group": group or "all", "lfm_inventory_dir": str(settings.inventory_dir)},
+        extra={
+            "lfm_filter_group": group or "all",
+            "lfm_inventory_dir": str(settings.inventory_dir),
+        },
     )
 
     hosts = _MOCK_HOSTS
