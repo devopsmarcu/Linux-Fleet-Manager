@@ -38,9 +38,13 @@ dmypy.json
 # IDE
 .vscode/
 .idea/
+.claude/
+.trae/
+lfm-remotion-demo/
 *.swp
 *.swo
-*~
+*~/
+
 
 # OS
 .DS_Store
