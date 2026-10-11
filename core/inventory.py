@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from core.config import get_settings
+from core.exceptions import InventoryError
+from core.logger import get_logger
+from core.models import Host, HostStatusEnum, HostSystemInfo, InventorySummary
 
 from core.config import get_settings
 from core.exceptions import InventoryError
@@ -33,6 +40,36 @@ class InventoryManager:
         self.inventory_file: Path = inventory_file or (
             settings.ansible_dir / "inventory" / settings.ansible_inventory_file
         )
+
+        # v2: If the inventory provider is set to dynamic, treat the inventory_file as a script
+        self._is_dynamic = False
+        if settings.ansible_inventory_provider == "dynamic":
+            # In dynamic mode, we must ensure the script is configured and executable
+            script_path = settings.ansible_dynamic_inventory_script
+            if script_path is None:
+                raise InventoryError(
+                    "Script de inventário dinâmico não configurado",
+                    detail="Defina 'ansible_dynamic_inventory_script' nas configurações.",
+                )
+
+            # Update inventory_file to point to the script for the dynamic loading logic
+            self.inventory_file = script_path
+
+            if not self.inventory_file.is_file():
+                raise InventoryError(
+                    "Script de inventário dinâmico não encontrado",
+                    path=str(self.inventory_file),
+                )
+
+            import os
+            if not os.access(self.inventory_file, os.X_OK):
+                raise InventoryError(
+                    "Script de inventário dinâmico não tem permissão de execução",
+                    path=str(self.inventory_file),
+                )
+
+            self._is_dynamic = True
+
         if not self.inventory_file.is_file():
             raise InventoryError(
                 "Arquivo de inventário não encontrado",
@@ -91,11 +128,15 @@ class InventoryManager:
             "Carregando inventário",
             extra={"lfm_inventory_file": str(self.inventory_file)},
         )
-        parser = self._parse_ini()
-        self._resolve_group_children(parser)
-        self._load_external_group_vars()
-        self._build_hosts(parser)
-        self._load_external_host_vars()
+        if self._is_dynamic:
+            self._load_dynamic()
+        else:
+            parser = self._parse_ini()
+            self._resolve_group_children(parser)
+            self._load_external_group_vars()
+            self._build_hosts(parser)
+            self._load_external_host_vars()
+
         logger.info(
             "Inventário carregado com sucesso",
             extra={
@@ -109,6 +150,83 @@ class InventoryManager:
                 "ou adicione novas máquinas.",
                 extra={"lfm_inventory_file": str(self.inventory_file)},
             )
+
+    def _load_dynamic(self) -> None:
+        """Executa o script de inventário dinâmico e parseia o JSON resultante."""
+        try:
+            # execute the script without shell=True for security
+            result = subprocess.run(
+                [str(self.inventory_file)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            payload = json.loads(result.stdout)
+
+            if not isinstance(payload, dict):
+                raise InventoryError("Inventário dinâmico retornou formato inválido (esperado dict)")
+
+            # Ansible dynamic inventory JSON structure:
+            # {
+            #   "_meta": { "hostvars": { "host1": {...}, ... } },
+            #   "group1": { "hosts": ["host1", ...], "vars": {...} },
+            #   "all": { "hosts": ["host1", ...], "vars": {...} }
+            # }
+
+            meta = payload.get("_meta", {})
+            hostvars = meta.get("hostvars", {})
+
+            for group_name, group_data in payload.items():
+                if group_name == "_meta":
+                    continue
+
+                if not isinstance(group_data, dict):
+                    continue
+
+                hosts = group_data.get("hosts", [])
+                if isinstance(hosts, list):
+                    self._groups.setdefault(group_name, set()).update(hosts)
+
+            # Build Host objects from meta.hostvars or group membership
+            all_host_names: set[str] = set()
+            for hosts in self._groups.values():
+                all_host_names |= hosts
+
+            for name in all_host_names:
+                vars_map = hostvars.get(name, {})
+
+                # Resolve basics
+                address = vars_map.get("ansible_host", name)
+                port = int(vars_map.get("ansible_port", 22))
+                user = vars_map.get("ansible_user")
+
+                # Determine groups for this host
+                groups = sorted([g for g, members in self._groups.items() if name in members])
+
+                self._hosts[name] = Host(
+                    name=name,
+                    address=address,
+                    groups=groups,
+                    vars=vars_map,
+                    user=user,
+                    port=port,
+                )
+
+        except subprocess.CalledProcessError as exc:
+            raise InventoryError(
+                "Erro ao executar script de inventário dinâmico",
+                detail=f"RC {exc.returncode}: {exc.stderr or exc.stdout}",
+            )
+        except subprocess.TimeoutExpired:
+            raise InventoryError("Timeout ao executar script de inventário dinâmico")
+        except json.JSONDecodeError as exc:
+            raise InventoryError(
+                "Saída do inventário dinâmico não é um JSON válido",
+                detail=str(exc),
+            )
+        except Exception as exc:
+            raise InventoryError(f"Erro inesperado no inventário dinâmico: {str(exc)}")
 
     def _parse_ini(self) -> dict[str, dict]:
         parser: dict[str, dict] = {

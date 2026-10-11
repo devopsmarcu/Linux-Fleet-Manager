@@ -144,7 +144,9 @@ def check(
                     border_style="yellow",
                 )
             )
-            raise typer.Exit(code=3) from exc
+            # v2: Timeout is now treated as a partial failure (Code 2)
+            # instead of a global error (Code 3) to maintain consistency.
+            raise typer.Exit(code=2) from exc
         except AnsibleError as exc:
             logger.error(str(exc), extra={"lfm_error_details": exc.details})
             console.print(

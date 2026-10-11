@@ -69,6 +69,7 @@ class PackageManager:
         host_name: str | None = None,
         group: str | None = None,
         timeout: int | None = None,
+        verify: bool = False,
     ) -> PackageReport:
         """Instala *package* nos hosts indicados."""
         return self._run_operation(
@@ -77,6 +78,7 @@ class PackageManager:
             host_name=host_name,
             group=group,
             timeout=timeout,
+            verify=verify,
         )
 
     def remove(
@@ -106,9 +108,13 @@ class PackageManager:
         host_name: str | None = None,
         group: str | None = None,
         timeout: int | None = None,
+        verify: bool = False,
     ) -> PackageReport:
         """Valida, resolve targets, executa playbook e constrói PackageReport."""
         self.validate_package_name(package)
+
+        # A verificação de estado só é suportada para a ação de instalação
+        should_verify = verify and action == PackageAction.INSTALL
 
         target_pattern = host_name or group or "all"
         known_hosts = {h.name: h for h in self.inventory_manager.list_hosts()}
@@ -140,6 +146,7 @@ class PackageManager:
                     "lfm_targets": target_pattern,
                 },
                 timeout=timeout,
+                verification_cmd=f"dpkg -s {package} || rpm -q {package}" if should_verify else None,
             )
         except Exception as exc:
             logger.error(
@@ -239,6 +246,7 @@ class PackageManager:
                         distribution=pkg_data.get("distribution"),
                         msg=pkg_data.get("msg") or task.msg,
                         duration_seconds=task.duration_seconds,
+                        verification_status=task.verification_status,
                     )
                 )
 

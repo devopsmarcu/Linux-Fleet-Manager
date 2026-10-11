@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import shutil
-import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from core.exceptions import (
     AnsibleError,
     AnsibleTimeoutError,
 )
+from core.inventory_provider import IniInventoryProvider, DynamicInventoryProvider, InventoryProvider
 from core.logger import get_logger
 from core.models import (
     AnsibleOperationResult,
@@ -21,6 +23,7 @@ from core.models import (
     Host,
     HostStatus,
     HostStatusEnum,
+    VerificationStatus,
 )
 
 logger = get_logger("ansible.runner")
@@ -42,6 +45,7 @@ class AnsibleExecutor:
 
     def __init__(
         self,
+        inventory_provider: InventoryProvider | None = None,
         inventory_file: Path | None = None,
         ansible_cfg: Path | None = None,
         forks: int | None = None,
@@ -49,9 +53,19 @@ class AnsibleExecutor:
     ) -> None:
         settings = get_settings()
         self.base_dir: Path = settings.base_dir
-        self.inventory_file: Path = inventory_file or (
-            settings.ansible_dir / "inventory" / settings.ansible_inventory_file
-        )
+
+        # Backward compatibility: if inventory_file is passed, wrap it in an IniInventoryProvider
+        if inventory_file:
+            self.inventory_provider = IniInventoryProvider(inventory_file=inventory_file)
+        elif inventory_provider:
+            self.inventory_provider = inventory_provider
+        else:
+            # Determine provider based on settings
+            if settings.ansible_inventory_provider == "dynamic":
+                self.inventory_provider = DynamicInventoryProvider(script_path=settings.ansible_dynamic_inventory_script)
+            else:
+                self.inventory_provider = IniInventoryProvider()
+
         self.ansible_cfg: Path = ansible_cfg or settings.ansible_cfg_path or (
             self.base_dir / "ansible.cfg"
         )
@@ -71,6 +85,7 @@ class AnsibleExecutor:
         become: bool | None = None,
         extra_vars: dict[str, Any] | None = None,
         timeout: int | None = None,
+        verification_cmd: str | None = None,
     ) -> AnsibleOperationResult:
         """Executa um módulo ad-hoc do Ansible (equivalente a `ansible targets -m module`)."""
         if not module:
@@ -78,19 +93,24 @@ class AnsibleExecutor:
 
         operation_id = uuid.uuid4().hex[:12]
 
-        # Pass extra_vars via temporary file to prevent shell injection and handle complex types
+        # Pass extra_vars via temporary file with restricted permissions
         extra_vars_file = None
         if extra_vars:
             import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
+            # Create temp file with 0600 permissions
+            fd = os.open(
+                tempfile.mktemp(suffix=".json"),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600
+            )
+            with os.fdopen(fd, 'w') as tf:
                 json.dump(extra_vars, tf)
-                extra_vars_file = tf.name
+                extra_vars_file = Path(tf.name)
 
         cmd: list[str] = [
             self._binary("ansible"),
             str(targets),
-            "-i",
-            str(self.inventory_file),
+            *self.inventory_provider.get_inventory_args(),
             "-m",
             module,
             "--forks",
@@ -108,6 +128,11 @@ class AnsibleExecutor:
         if extra_vars_file:
             cmd.extend(["-e", f"@{extra_vars_file}"])
 
+        # Integrate Ansible Vault
+        settings = get_settings()
+        if settings.ansible_vault_password_file:
+            cmd.extend(["--vault-password-file", str(settings.ansible_vault_password_file)])
+
         try:
             result = self._run(
                 cmd,
@@ -118,10 +143,7 @@ class AnsibleExecutor:
             )
         finally:
             if extra_vars_file:
-                try:
-                    Path(extra_vars_file).unlink(missing_ok=True)
-                except Exception:
-                    pass
+                extra_vars_file.unlink(missing_ok=True)
 
         return result
 
@@ -132,6 +154,7 @@ class AnsibleExecutor:
         become: bool | None = None,
         extra_vars: dict[str, Any] | None = None,
         timeout: int | None = None,
+        verification_cmd: str | None = None,
     ) -> AnsibleOperationResult:
         """Executa um playbook Ansible (equivalente a `ansible-playbook playbook.yml`)."""
         playbook_path = Path(playbook)
@@ -145,19 +168,24 @@ class AnsibleExecutor:
 
         operation_id = uuid.uuid4().hex[:12]
 
-        # Pass extra_vars via temporary file to prevent shell injection and handle complex types
+        # Pass extra_vars via temporary file with restricted permissions
         extra_vars_file = None
         if extra_vars:
             import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
+            # Create temp file with 0600 permissions
+            fd = os.open(
+                tempfile.mktemp(suffix=".json"),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600
+            )
+            with os.fdopen(fd, 'w') as tf:
                 json.dump(extra_vars, tf)
-                extra_vars_file = tf.name
+                extra_vars_file = Path(tf.name)
 
         cmd: list[str] = [
             self._binary("ansible-playbook"),
             str(playbook_path),
-            "-i",
-            str(self.inventory_file),
+            *self.inventory_provider.get_inventory_args(),
             "--forks",
             str(self.forks),
             "-T",
@@ -173,6 +201,11 @@ class AnsibleExecutor:
         if extra_vars_file:
             cmd.extend(["-e", f"@{extra_vars_file}"])
 
+        # Integrate Ansible Vault
+        settings = get_settings()
+        if settings.ansible_vault_password_file:
+            cmd.extend(["--vault-password-file", str(settings.ansible_vault_password_file)])
+
         try:
             result = self._run(
                 cmd,
@@ -183,10 +216,7 @@ class AnsibleExecutor:
             )
         finally:
             if extra_vars_file:
-                try:
-                    Path(extra_vars_file).unlink(missing_ok=True)
-                except Exception:
-                    pass
+                extra_vars_file.unlink(missing_ok=True)
 
         return result
 
@@ -247,11 +277,30 @@ class AnsibleExecutor:
         self,
         cmd: list[str],
         operation_id: str,
+        verification_cmd: str | None = None,
         **extra_meta: Any,
     ) -> AnsibleOperationResult:
+        """Adaptador síncrono para a execução assíncrona do processo Ansible."""
+        try:
+            return asyncio.run(self._run_async(cmd, operation_id, verification_cmd=verification_cmd, **extra_meta))
+        except RuntimeError as exc:
+            if "asyncio.run() cannot be called from a running event loop" in str(exc):
+                import nest_asyncio
+                nest_asyncio.apply()
+                return asyncio.run(self._run_async(cmd, operation_id, verification_cmd=verification_cmd, **extra_meta))
+            raise exc
+
+    async def _run_async(
+        self,
+        cmd: list[str],
+        operation_id: str,
+        verification_cmd: str | None = None,
+        **extra_meta: Any,
+    ) -> AnsibleOperationResult:
+        """Executa o subprocesso Ansible de forma assíncrona para melhor controle de ciclo de vida."""
         started_at = datetime.now()
         logger.info(
-            "Iniciando operação Ansible",
+            "Iniciando operação Ansible (Async)",
             extra={
                 "lfm_op_id": operation_id,
                 "lfm_cmd": " ".join(cmd),
@@ -263,33 +312,64 @@ class AnsibleExecutor:
             command=list(cmd),
             started_at=started_at,
         )
+
         try:
-            proc = subprocess.run(
-                cmd,
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
                 env=self._env,
                 cwd=str(self.base_dir),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                check=False,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except subprocess.TimeoutExpired as exc:
-            raise AnsibleTimeoutError(
-                "Operação Ansible excedeu tempo limite",
-                op_id=operation_id,
-                timeout_seconds=self.timeout,
-            ) from exc
+
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=self.timeout,
+                )
+                stdout = stdout_bytes.decode(errors="replace")
+                stderr = stderr_bytes.decode(errors="replace")
+                result.return_code = proc.returncode
+
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Operação Ansible excedeu tempo limite. Encerrando processo...",
+                    extra={"lfm_op_id": operation_id, "lfm_timeout": self.timeout},
+                )
+
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+
+                raise AnsibleTimeoutError(
+                    "Operação Ansible excedeu tempo limite e foi encerrada",
+                    op_id=operation_id,
+                    timeout_seconds=self.timeout,
+                )
+
         except FileNotFoundError as exc:
             raise AnsibleError(
                 "Binário Ansible não encontrado. Instale: pip install ansible",
                 missing_binary=str(exc.filename),
             ) from exc
+        except Exception as exc:
+            if not isinstance(exc, (AnsibleError, AnsibleTimeoutError)):
+                logger.exception("Erro inesperado durante a execução do Ansible", extra={"lfm_op_id": operation_id})
+                raise AnsibleError(f"Erro interno na execução: {str(exc)}") from exc
+            raise exc
 
-        result.return_code = proc.returncode
-        result.raw_stdout = proc.stdout or ""
-        result.raw_stderr = proc.stderr or ""
+        result.raw_stdout = stdout or ""
+        result.raw_stderr = stderr or ""
         result.task_results = self._parse_output(result.raw_stdout, result.raw_stderr)
         result.extra = dict(extra_meta)
+
+        # v2: Perform optional state verification for successful hosts
+        if verification_cmd:
+            await self._verify_state(result, verification_cmd)
+
         result.finalize()
 
         if logger.isEnabledFor(10):  # DEBUG
@@ -340,8 +420,6 @@ class AnsibleExecutor:
         else:
             for host_name, host_data in (payload.get("platform_summary") or {}).items():
                 results.append(self._build_task_result(host_name, "adhoc", host_data))
-            # Callback JSON do `ansible` (modo adhoc) também pode vir em `plays` vazio
-            # ou em `stats`. Tentamos extrair da stdout bruta linha-a-linha como fallback.
             if not results:
                 results.extend(self._parse_adhoc_line_by_line(stdout))
         return results
@@ -488,11 +566,7 @@ class AnsibleExecutor:
         return results
 
     def _validate(self) -> None:
-        if not self.inventory_file.is_file():
-            raise AnsibleError(
-                "Inventário Ansible não encontrado",
-                path=str(self.inventory_file),
-            )
+        # Inventory validation is now handled by the InventoryProvider
         if self.ansible_cfg and not self.ansible_cfg.is_file():
             logger.debug(
                 "ansible.cfg não encontrado no path padrão, usando defaults do Ansible",
@@ -506,6 +580,76 @@ class AnsibleExecutor:
                 "Binário `ansible` não está disponível no PATH. "
                 "Comandos reais contra hosts falharão. Instale com `pip install ansible`.",
             )
+
+    async def _verify_state(
+        self,
+        result: AnsibleOperationResult,
+        verification_cmd: str,
+    ) -> None:
+        """
+        Verifica o estado final de cada host que teve sucesso na operação principal.
+        Executa a verificação via Ansible ad-hoc para garantir consistência de transporte e auth.
+        """
+        # We execute verification for all hosts that didn't fail/unreachable
+        targets_to_verify = result.hosts_ok
+        if not targets_to_verify:
+            return
+
+        # Build a comma-separated list of hosts for the -l limit
+        targets_str = ",".join(targets_to_verify)
+
+        # The verification command is usually a shell command to be run via Ansible's 'shell' module.
+        cmd = [
+            self._binary("ansible"),
+            targets_str,
+            *self.inventory_provider.get_inventory_args(),
+            "-m", "shell",
+            "-a", verification_cmd,
+            "--forks", str(self.forks),
+            "-T", str(self.timeout),
+        ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                env=self._env,
+                cwd=str(self.base_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=self.timeout,
+                )
+                stdout = stdout_bytes.decode(errors="replace")
+                stderr = stderr_bytes.decode(errors="replace")
+
+                # Parse the ad-hoc output to map verification results back to hosts
+                verify_results = self._parse_adhoc_line_by_line(stdout)
+
+                # Map these results back to the original task_results
+                for vr in verify_results:
+                    for tr in result.task_results:
+                        if tr.host == vr.host:
+                            if vr.return_code == 0:
+                                tr.verification_status = VerificationStatus.VERIFIED
+                            else:
+                                tr.verification_status = VerificationStatus.VERIFICATION_FAILED
+
+            except asyncio.TimeoutError:
+                for tr in result.task_results:
+                    if tr.host in targets_to_verify:
+                        tr.verification_status = VerificationStatus.INSUFFICIENT_DATA
+                proc.kill()
+                await proc.wait()
+
+        except Exception:
+            # If the verification infrastructure itself fails, mark as insufficient data
+            for tr in result.task_results:
+                if tr.host in targets_to_verify:
+                    tr.verification_status = VerificationStatus.INSUFFICIENT_DATA
 
     def _binary(self, name: str) -> str:
         bin_path = shutil.which(name)

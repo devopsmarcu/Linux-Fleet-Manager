@@ -30,6 +30,7 @@ def _run_package_operation(
     yes: bool = False,
     as_json: bool = False,
     timeout: int = 30,
+    verify: bool = False,
 ) -> None:
     try:
         PackageManager.validate_package_name(package)
@@ -72,9 +73,14 @@ def _run_package_operation(
                 raise typer.Exit(code=0)
 
     manager = PackageManager()
-    report: PackageReport = manager._run_operation(
+    report: PackageReport = manager.install(
         package=package,
-        action=action,
+        host_name=host_name,
+        group=group,
+        timeout=timeout,
+        verify=verify,
+    ) if action == PackageAction.INSTALL else manager.remove(
+        package=package,
         host_name=host_name,
         group=group,
         timeout=timeout,
@@ -92,18 +98,32 @@ def _print_report(report: PackageReport) -> None:
     table = Table(show_lines=False)
     table.add_column("HOST", style="cyan", no_wrap=True)
     table.add_column("STATUS", style="bold", justify="center")
+    table.add_column("VERIFY", justify="center")
     table.add_column("CHANGED", justify="center")
     table.add_column("PKG MANAGER", style="dim")
     table.add_column("INFO", style="dim")
 
     for r in report.results:
         status_cell = "[bold green][OK][/bold green]" if r.success else "[bold red][FAIL][/bold red]"
+
+        # Verification status mapping
+        from core.models import VerificationStatus
+        v_status = r.verification_status
+        if v_status == VerificationStatus.VERIFIED:
+            verify_cell = "[green]✓[/green]"
+        elif v_status == VerificationStatus.VERIFICATION_FAILED:
+            verify_cell = "[red]✗[/red]"
+        elif v_status == VerificationStatus.INSUFFICIENT_DATA:
+            verify_cell = "[yellow]!?[/yellow]"
+        else:
+            verify_cell = "-"
+
         changed_cell = "[green]yes[/green]" if r.changed else "no"
         pkg_mgr = r.pkg_manager or "-"
         info = r.error or r.msg or "-"
         if len(info) > 60:
             info = info[:57] + "..."
-        table.add_row(r.host, status_cell, changed_cell, pkg_mgr, info)
+        table.add_row(r.host, status_cell, verify_cell, changed_cell, pkg_mgr, info)
 
     _CONSOLE.print(table)
     _CONSOLE.print()
@@ -133,9 +153,10 @@ def install(
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirmar sem perguntar."),
     as_json: bool = typer.Option(False, "--json", help="Retornar em JSON."),
     timeout: int = typer.Option(30, "--timeout", "-t", help="Timeout SSH.", min=1, max=600),
+    verify: bool = typer.Option(False, "--verify", help="Verificar o estado final do pacote após a instalação."),
 ) -> None:
     """Instalar um pacote Linux via Ansible."""
-    _run_package_operation(PackageAction.INSTALL, package, host, group, yes, as_json, timeout)
+    _run_package_operation(PackageAction.INSTALL, package, host, group, yes, as_json, timeout, verify)
 
 @app.command("remove")
 def remove(

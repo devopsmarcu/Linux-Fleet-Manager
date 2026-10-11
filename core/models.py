@@ -30,6 +30,14 @@ class ChangeState(enum.StrEnum):
     UNREACHABLE = "unreachable"
 
 
+class VerificationStatus(enum.StrEnum):
+    """Status of the post-execution state verification."""
+    NOT_REQUESTED = "not_requested"
+    VERIFIED = "verified"
+    VERIFICATION_FAILED = "verification_failed"
+    INSUFFICIENT_DATA = "insufficient_data"
+
+
 class Host(BaseModel):
     """Representa um host do inventário."""
 
@@ -75,6 +83,7 @@ class AnsibleTaskResult(BaseModel):
     msg: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
     duration_seconds: float = 0.0
+    verification_status: VerificationStatus = VerificationStatus.NOT_REQUESTED
 
 
 class AnsibleOperationResult(BaseModel):
@@ -113,10 +122,14 @@ class AnsibleOperationResult(BaseModel):
         if self.finished_at is None:
             self.finished_at = datetime.now()
         self.duration_seconds = (self.finished_at - self.started_at).total_seconds()
+
+        # v2 Logic: success is only True if there are NO failed or unreachable hosts,
+        # and the return code is 0.
+        # If there are some failures but some successes, success=False, but return_code might be 0 or 2.
         self.success = (
-            self.return_code in (0,)
+            self.return_code == 0
             and not self.hosts_failed
-            and len(self.hosts_unreachable) < self.hosts_total
+            and not self.hosts_unreachable
         ) or (self.hosts_total == 0 and self.return_code == 0)
 
 
@@ -227,6 +240,8 @@ class PackageHostResult(BaseModel):
     error: str | None = None
     duration_seconds: float = 0.0
     executed_at: datetime = Field(default_factory=datetime.now)
+    verification_status: VerificationStatus = VerificationStatus.NOT_REQUESTED
+
 
     @property
     def status_label(self) -> str:

@@ -82,9 +82,12 @@ class Settings(BaseSettings):
     log_backup_count: int = 7
 
     ansible_inventory_file: str = "hosts.ini"
+    ansible_inventory_provider: Literal["ini", "dynamic"] = "ini"
+    ansible_dynamic_inventory_script: Path | None = None
     ansible_forks: int = 10
     ansible_timeout: int = 30
     ansible_cfg_path: Path | None = None
+    ansible_vault_password_file: Path | None = None
 
     default_output_format: Literal["table", "json", "yaml"] = "table"
 

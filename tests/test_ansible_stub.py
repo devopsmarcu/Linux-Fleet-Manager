@@ -9,7 +9,8 @@ class TestAnsibleExecutor:
         executor = AnsibleExecutor(forks=15, timeout=60)
         assert executor.forks == 15
         assert executor.timeout == 60
-        assert executor.inventory_file.exists()
+        # verify that the default provider is correctly initialized
+        assert executor.inventory_provider.inventory_file.exists()
 
     def test_alias_ansible_runner(self) -> None:
         assert AnsibleRunner is AnsibleExecutor
