@@ -83,17 +83,27 @@ lfm status check
 lfm health run
 ```
 
-### Gerenciamento Remoto
+### Gerenciamento de Pacotes
 ```bash
-# Atualizar todas as estações de trabalho
-lfm update --group workstations
-
 # Instalar um pacote em um host específico
 lfm package install nginx --host web-server-01
 
-# Executar um comando remoto controlado
-lfm exec run "df -h"
+# Instalar um pacote com verificação de estado final (State-Based Validation)
+lfm package install htop --verify
+
+# Remover um pacote de um grupo
+lfm package remove apache2 --group webservers
 ```
+
+**Validação Baseada em Estado (`--verify`):**
+Quando ativada, o LFM executa uma checagem independente após a instalação para confirmar se o pacote está realmente presente no sistema.
+- `✓` (**VERIFIED**): O pacote foi confirmado via gerenciador de pacotes local.
+- `✗` (**VERIFICATION_FAILED**): A instalação foi reportada como sucesso, mas a verificação falhou.
+- `!?` (**INSUFFICIENT_DATA**): A verificação não pôde ser concluída (timeout ou método incompatível).
+- `-` (**NOT_REQUESTED**): Verificação não solicitada.
+
+*Nota: Um status `VERIFIED` confirma o estado final do sistema, mas não comprova, isoladamente, a idempotência da operação.*
+
 
 ### Observabilidade & Auditoria
 ```bash
