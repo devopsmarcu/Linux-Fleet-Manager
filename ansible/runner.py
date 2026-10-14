@@ -94,18 +94,7 @@ class AnsibleExecutor:
         operation_id = uuid.uuid4().hex[:12]
 
         # Pass extra_vars via temporary file with restricted permissions
-        extra_vars_file = None
-        if extra_vars:
-            import tempfile
-            # Create temp file with 0600 permissions
-            fd = os.open(
-                tempfile.mktemp(suffix=".json"),
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                0o600
-            )
-            with os.fdopen(fd, 'w') as tf:
-                json.dump(extra_vars, tf)
-                extra_vars_file = Path(tf.name)
+        extra_vars_file = self._create_extra_vars_file(extra_vars) if extra_vars else None
 
         cmd: list[str] = [
             self._binary("ansible"),
@@ -140,6 +129,7 @@ class AnsibleExecutor:
                 lfm_kind="adhoc",
                 lfm_module=module,
                 lfm_targets=targets,
+                timeout=timeout,
             )
         finally:
             if extra_vars_file:
@@ -169,18 +159,7 @@ class AnsibleExecutor:
         operation_id = uuid.uuid4().hex[:12]
 
         # Pass extra_vars via temporary file with restricted permissions
-        extra_vars_file = None
-        if extra_vars:
-            import tempfile
-            # Create temp file with 0600 permissions
-            fd = os.open(
-                tempfile.mktemp(suffix=".json"),
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                0o600
-            )
-            with os.fdopen(fd, 'w') as tf:
-                json.dump(extra_vars, tf)
-                extra_vars_file = Path(tf.name)
+        extra_vars_file = self._create_extra_vars_file(extra_vars) if extra_vars else None
 
         cmd: list[str] = [
             self._binary("ansible-playbook"),
@@ -213,6 +192,7 @@ class AnsibleExecutor:
                 lfm_kind="playbook",
                 lfm_playbook=str(playbook_path),
                 lfm_targets=targets or "all",
+                timeout=timeout,
             )
         finally:
             if extra_vars_file:
@@ -278,16 +258,17 @@ class AnsibleExecutor:
         cmd: list[str],
         operation_id: str,
         verification_cmd: str | None = None,
+        timeout: int | None = None,
         **extra_meta: Any,
     ) -> AnsibleOperationResult:
         """Adaptador síncrono para a execução assíncrona do processo Ansible."""
         try:
-            return asyncio.run(self._run_async(cmd, operation_id, verification_cmd=verification_cmd, **extra_meta))
+            return asyncio.run(self._run_async(cmd, operation_id, verification_cmd=verification_cmd, timeout=timeout, **extra_meta))
         except RuntimeError as exc:
             if "asyncio.run() cannot be called from a running event loop" in str(exc):
                 import nest_asyncio
                 nest_asyncio.apply()
-                return asyncio.run(self._run_async(cmd, operation_id, verification_cmd=verification_cmd, **extra_meta))
+                return asyncio.run(self._run_async(cmd, operation_id, verification_cmd=verification_cmd, timeout=timeout, **extra_meta))
             raise exc
 
     async def _run_async(
@@ -295,6 +276,7 @@ class AnsibleExecutor:
         cmd: list[str],
         operation_id: str,
         verification_cmd: str | None = None,
+        timeout: int | None = None,
         **extra_meta: Any,
     ) -> AnsibleOperationResult:
         """Executa o subprocesso Ansible de forma assíncrona para melhor controle de ciclo de vida."""
@@ -313,6 +295,9 @@ class AnsibleExecutor:
             started_at=started_at,
         )
 
+        # Use provided timeout or fall back to executor default
+        effective_timeout = timeout or self.timeout
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -325,7 +310,7 @@ class AnsibleExecutor:
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(),
-                    timeout=self.timeout,
+                    timeout=effective_timeout,
                 )
                 stdout = stdout_bytes.decode(errors="replace")
                 stderr = stderr_bytes.decode(errors="replace")
@@ -471,9 +456,26 @@ class AnsibleExecutor:
             duration_seconds=duration,
         )
 
-    # ------------------------------------------------------------------
-    # Helpers internos
-    # ------------------------------------------------------------------
+    def _create_extra_vars_file(self, extra_vars: dict[str, Any]) -> Path:
+        """Creates a secure temporary JSON file for Ansible extra_vars."""
+        import tempfile
+        try:
+            # NamedTemporaryFile with delete=False to ensure the path is stable for Ansible
+            # and compatible across Windows/Linux.
+            with tempfile.NamedTemporaryFile(
+                mode='w', suffix='.json', delete=False, encoding='utf-8'
+            ) as tf:
+                json.dump(extra_vars, tf)
+                path = Path(tf.name)
+
+            # Set restrictive permissions (0600)
+            os.chmod(path, 0o600)
+            return path
+        except Exception as exc:
+            # Propagate the exception to avoid silent failures
+            logger.error("Failed to create extra_vars file", extra={"lfm_error": str(exc)})
+            raise AnsibleError(f"Failed to create temporary vars file: {exc}") from exc
+
     @staticmethod
     def _map_ping_result(task: AnsibleTaskResult) -> tuple[HostStatusEnum, int | None, str | None]:
         if task.unreachable:

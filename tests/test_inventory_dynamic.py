@@ -122,7 +122,7 @@ def test_executor_default_ini_provider(mock_settings, tmp_path):
     hosts_ini.write_text("[all]\nlocalhost ansible_connection=local")
 
     mock_settings.ansible_inventory_provider = "ini"
-    mock_settings.base_dir = tmp_path
+    mock_settings.ansible_dir = tmp_path
     mock_settings.ansible_inventory_file = "hosts.ini"
 
     executor = AnsibleExecutor()

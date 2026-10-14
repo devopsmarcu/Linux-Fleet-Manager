@@ -62,7 +62,7 @@ class HealthChecker:
                 extra_vars={"lfm_quick_check": quick},
             )
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Falha na execução do playbook de health check",
                 extra={"lfm_error": str(exc)},
             )

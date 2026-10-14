@@ -27,8 +27,8 @@ class IniInventoryProvider:
         settings = get_settings()
         # Preserve the existing resolution logic: settings.ansible_dir / "inventory" / settings.ansible_inventory_file
         self.inventory_file: Path = inventory_file or (
-            settings.base_dir / "inventory" / settings.ansible_inventory_file
-        )
+    settings.ansible_dir / "inventory" / settings.ansible_inventory_file
+    )
         self._validate()
 
     def _validate(self) -> None:
