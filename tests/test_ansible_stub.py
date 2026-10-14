@@ -58,4 +58,3 @@ class TestAnsibleExecutor:
         assert "remote-host" in host_names
         localhost_status = next(r for r in results if r.host.name == "localhost")
         assert localhost_status.status == HostStatusEnum.ONLINE
-

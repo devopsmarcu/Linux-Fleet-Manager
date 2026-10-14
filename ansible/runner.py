@@ -14,7 +14,7 @@ from core.exceptions import (
     AnsibleError,
     AnsibleTimeoutError,
 )
-from core.inventory_provider import IniInventoryProvider, DynamicInventoryProvider, InventoryProvider
+from core.inventory_provider import IniInventoryProvider, DynamicInventoryProvider, YamlInventoryProvider, InventoryProvider
 from core.logger import get_logger
 from core.models import (
     AnsibleOperationResult,
@@ -61,7 +61,13 @@ class AnsibleExecutor:
             self.inventory_provider = inventory_provider
         else:
             # Determine provider based on settings
-            if settings.ansible_inventory_provider == "dynamic":
+            if settings.ansible_inventory_provider == "yaml":
+                self.inventory_provider = YamlInventoryProvider(
+                    plugin_file=settings.ansible_dynamic_inventory_plugin,
+                    cache_ttl=settings.ansible_inventory_cache_ttl,
+                    cache_dir=settings.ansible_inventory_cache_dir,
+                )
+            elif settings.ansible_inventory_provider == "dynamic":
                 self.inventory_provider = DynamicInventoryProvider(script_path=settings.ansible_dynamic_inventory_script)
             else:
                 self.inventory_provider = IniInventoryProvider()

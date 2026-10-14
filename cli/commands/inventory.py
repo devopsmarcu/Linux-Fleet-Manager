@@ -21,9 +21,9 @@ app = typer.Typer(
 )
 
 
-def _manager() -> InventoryManager:
+def _manager(refresh_cache: bool = False) -> InventoryManager:
     try:
-        return InventoryManager()
+        return InventoryManager(refresh_cache=refresh_cache)
     except InventoryError as exc:
         logger.error(str(exc), extra={"lfm_error_details": exc.details})
         console = Console()
@@ -66,6 +66,11 @@ def inventory_root(
         min=1,
         max=300,
     ),
+    refresh_cache: bool = typer.Option(
+        False,
+        "--refresh-cache",
+        help="Forçar atualização do cache de inventário dinâmico (ignora TTL).",
+    ),
 ) -> None:
     """[bold]lfm inventory[/bold] — descobre e exibe informações detalhadas dos hosts Linux."""
     if ctx.invoked_subcommand is None:
@@ -77,8 +82,10 @@ def inventory_root(
             as_json = False
         if isinstance(timeout, typer.models.OptionInfo):
             timeout = 10
+        if isinstance(refresh_cache, typer.models.OptionInfo):
+            refresh_cache = False
 
-        collect_and_display(host_name=host, group=group, as_json=as_json, timeout=timeout)
+        collect_and_display(host_name=host, group=group, as_json=as_json, timeout=timeout, refresh_cache=refresh_cache)
 
 
 @app.command("collect")
@@ -106,6 +113,11 @@ def collect_cmd(
         "-t",
         help="Timeout em segundos.",
     ),
+    refresh_cache: bool = typer.Option(
+        False,
+        "--refresh-cache",
+        help="Forçar atualização do cache de inventário dinâmico (ignora TTL).",
+    ),
 ) -> None:
     """Executa a coleta detalhada via Ansible e exibe tabela ou JSON."""
     if isinstance(host, typer.models.OptionInfo):
@@ -116,8 +128,10 @@ def collect_cmd(
         as_json = False
     if isinstance(timeout, typer.models.OptionInfo):
         timeout = 10
+    if isinstance(refresh_cache, typer.models.OptionInfo):
+        refresh_cache = False
 
-    collect_and_display(host_name=host, group=group, as_json=as_json, timeout=timeout)
+    collect_and_display(host_name=host, group=group, as_json=as_json, timeout=timeout, refresh_cache=refresh_cache)
 
 
 def collect_and_display(
@@ -125,8 +139,9 @@ def collect_and_display(
     group: str | None = None,
     as_json: bool = False,
     timeout: int = 10,
+    refresh_cache: bool = False,
 ) -> None:
-    manager = _manager()
+    manager = _manager(refresh_cache=refresh_cache)
     collector = SystemInfoCollector(inventory_manager=manager)
     items: list[HostSystemInfo] = collector.collect(
         group=group, host_name=host_name, timeout=timeout
@@ -223,6 +238,11 @@ def list_hosts(
         "-v",
         help="Mostrar detalhes adicionais (usuário SSH, porta, conexão).",
     ),
+    refresh_cache: bool = typer.Option(
+        False,
+        "--refresh-cache",
+        help="Forçar atualização do cache de inventário dinâmico (ignora TTL).",
+    ),
 ) -> None:
     """Lista rápida dos hosts cadastrados no inventário (sem rodar Ansible)."""
     if isinstance(group, typer.models.OptionInfo):
@@ -231,8 +251,10 @@ def list_hosts(
         host_name = None
     if isinstance(verbose, typer.models.OptionInfo):
         verbose = False
+    if isinstance(refresh_cache, typer.models.OptionInfo):
+        refresh_cache = False
 
-    manager = _manager()
+    manager = _manager(refresh_cache=refresh_cache)
     try:
         hosts = manager.list_hosts(group=group, host_name=host_name)
     except LFMError as exc:

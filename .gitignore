@@ -77,3 +77,4 @@ ansible-vault-password
 *.retry
 ansible/facts.d/
 __pycache__/
+GAP_ANALYSIS_v2.md

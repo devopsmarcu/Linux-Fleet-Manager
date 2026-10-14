@@ -10,11 +10,12 @@ import yaml
 
 from core.config import get_settings
 from core.exceptions import InventoryError
-from core.logger import get_logger
-from core.models import Host, HostStatusEnum, HostSystemInfo, InventorySummary
-
-from core.config import get_settings
-from core.exceptions import InventoryError
+from core.inventory_provider import (
+    DynamicInventoryProvider,
+    IniInventoryProvider,
+    InventoryProvider,
+    YamlInventoryProvider,
+)
 from core.logger import get_logger
 from core.models import Host, HostStatusEnum, HostSystemInfo, InventorySummary
 
@@ -35,46 +36,43 @@ class InventoryManager:
     - Arquivos complementares em <inventory_dir>/group_vars/<grupo>.yml e host_vars/<host>.yml
     """
 
-    def __init__(self, inventory_file: Path | None = None) -> None:
+    def __init__(
+        self,
+        inventory_file: Path | None = None,
+        inventory_provider: InventoryProvider | None = None,
+        refresh_cache: bool = False,
+    ) -> None:
         settings = get_settings()
-        self.inventory_file: Path = inventory_file or (
-            settings.ansible_dir / "inventory" / settings.ansible_inventory_file
-        )
 
-        # v2: If the inventory provider is set to dynamic, treat the inventory_file as a script
-        self._is_dynamic = False
-        if settings.ansible_inventory_provider == "dynamic":
-            # In dynamic mode, we must ensure the script is configured and executable
-            script_path = settings.ansible_dynamic_inventory_script
-            if script_path is None:
-                raise InventoryError(
-                    "Script de inventário dinâmico não configurado",
-                    detail="Defina 'ansible_dynamic_inventory_script' nas configurações.",
-                )
-
-            # Update inventory_file to point to the script for the dynamic loading logic
-            self.inventory_file = script_path
-
-            if not self.inventory_file.is_file():
-                raise InventoryError(
-                    "Script de inventário dinâmico não encontrado",
-                    path=str(self.inventory_file),
-                )
-
-            import os
-            if not os.access(self.inventory_file, os.X_OK):
-                raise InventoryError(
-                    "Script de inventário dinâmico não tem permissão de execução",
-                    path=str(self.inventory_file),
-                )
-
-            self._is_dynamic = True
-
-        if not self.inventory_file.is_file():
-            raise InventoryError(
-                "Arquivo de inventário não encontrado",
-                path=str(self.inventory_file),
+        # Determine the inventory provider based on settings or explicit parameter
+        if inventory_provider is not None:
+            self.inventory_provider = inventory_provider
+        elif settings.ansible_inventory_provider == "yaml":
+            self.inventory_provider = YamlInventoryProvider(
+                plugin_file=settings.ansible_dynamic_inventory_plugin,
+                cache_ttl=settings.ansible_inventory_cache_ttl,
+                cache_dir=settings.ansible_inventory_cache_dir,
+                refresh_cache=refresh_cache,
             )
+        elif settings.ansible_inventory_provider == "dynamic":
+            self.inventory_provider = DynamicInventoryProvider(
+                script_path=settings.ansible_dynamic_inventory_script,
+            )
+        else:
+            self.inventory_provider = IniInventoryProvider(inventory_file=inventory_file)
+
+        # For backward compatibility and file-based operations, set inventory_file
+        if hasattr(self.inventory_provider, "inventory_file"):
+            self.inventory_file = self.inventory_provider.inventory_file
+        elif hasattr(self.inventory_provider, "script_path"):
+            self.inventory_file = self.inventory_provider.script_path
+        elif hasattr(self.inventory_provider, "plugin_file"):
+            self.inventory_file = self.inventory_provider.plugin_file
+        else:
+            self.inventory_file = inventory_file or (
+                settings.ansible_dir / "inventory" / settings.ansible_inventory_file
+            )
+
         self.inventory_dir = self.inventory_file.parent
         self._hosts: dict[str, Host] = {}
         self._groups: dict[str, set[str]] = {}
@@ -128,7 +126,10 @@ class InventoryManager:
             "Carregando inventário",
             extra={"lfm_inventory_file": str(self.inventory_file)},
         )
-        if self._is_dynamic:
+
+        if isinstance(self.inventory_provider, YamlInventoryProvider):
+            self._load_yaml()
+        elif isinstance(self.inventory_provider, DynamicInventoryProvider):
             self._load_dynamic()
         else:
             parser = self._parse_ini()
@@ -150,6 +151,16 @@ class InventoryManager:
                 "ou adicione novas máquinas.",
                 extra={"lfm_inventory_file": str(self.inventory_file)},
             )
+
+    def _load_yaml(self) -> None:
+        """Carrega inventário a partir de plugin YAML via YamlInventoryProvider (com cache)."""
+        try:
+            payload = self.inventory_provider.fetch_inventory()
+            self._parse_ansible_inventory_json(payload)
+        except InventoryError:
+            raise
+        except Exception as exc:
+            raise InventoryError(f"Erro inesperado ao carregar inventário YAML: {str(exc)}")
 
     def _load_dynamic(self) -> None:
         """Executa o script de inventário dinâmico e parseia o JSON resultante."""
@@ -227,6 +238,53 @@ class InventoryManager:
             )
         except Exception as exc:
             raise InventoryError(f"Erro inesperado no inventário dinâmico: {str(exc)}")
+
+    def _parse_ansible_inventory_json(self, payload: dict) -> None:
+        """Parse Ansible inventory JSON (from ansible-inventory --list) into internal structures.
+
+        Handles both the plugin output format and the dynamic inventory script format.
+        """
+        if not isinstance(payload, dict):
+            raise InventoryError("Inventário YAML retornou formato inválido (esperado dict)")
+
+        meta = payload.get("_meta", {})
+        hostvars = meta.get("hostvars", {})
+
+        for group_name, group_data in payload.items():
+            if group_name == "_meta":
+                continue
+
+            if not isinstance(group_data, dict):
+                continue
+
+            hosts = group_data.get("hosts", [])
+            if isinstance(hosts, list):
+                self._groups.setdefault(group_name, set()).update(hosts)
+
+        # Build Host objects from meta.hostvars or group membership
+        all_host_names: set[str] = set()
+        for hosts in self._groups.values():
+            all_host_names |= hosts
+
+        for name in all_host_names:
+            vars_map = hostvars.get(name, {})
+
+            # Resolve basics
+            address = vars_map.get("ansible_host", name)
+            port = int(vars_map.get("ansible_port", 22))
+            user = vars_map.get("ansible_user")
+
+            # Determine groups for this host
+            groups = sorted([g for g, members in self._groups.items() if name in members])
+
+            self._hosts[name] = Host(
+                name=name,
+                address=address,
+                groups=groups,
+                vars=vars_map,
+                user=user,
+                port=port,
+            )
 
     def _parse_ini(self) -> dict[str, dict]:
         parser: dict[str, dict] = {
